@@ -40,6 +40,10 @@ Schema details are intentionally not duplicated here. Use `prisma/schema.prisma`
 
 Fulfillment/order notification schema changes are tracked in the hand-created migration `prisma/migrations/20260625030000_add_fulfillment_orders_notifications/migration.sql`. Do not run `prisma migrate` for that file unless the workflow is intentionally changed; apply it manually, then run `npx prisma db pull` and `npx prisma generate`.
 
+Menu card weekday scheduling started from the manual SQL file `docs/sql/menu_card_weekday_schedule.sql`. After applying it in MySQL Workbench, run `npx prisma db pull` and `npx prisma generate` so `prisma/schema.prisma` and the generated client include `REPEAT_WEEKLY`, `ACTIVE_DAYS_JSON`, and `IS_UNLIMITED`.
+
+Stripe refund support uses the existing `business_order` table fields added by `docs/sql/add_stripe_order_payment_fields_admin_check.sql`: `STRIPE_CHECKOUT_SESSION_ID`, `STRIPE_PAYMENT_INTENT_ID`, `STRIPE_REFUND_ID`, `STRIPE_REFUND_STATUS`, and `STRIPE_REFUNDED_DATETIME`. After applying that SQL in another environment, run `npx prisma db pull` and `npx prisma generate`.
+
 ## Route Map
 
 Existing pages:
@@ -73,21 +77,22 @@ Existing API routes:
 - `/api/products`: legacy product CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped product routes below.
 - `/api/categories`: legacy category CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped category routes below.
 - `/api/tags`: legacy tag CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped tag routes below.
-- `/api/dashboard/[businessId]/products`: authenticated selected-business Product list/create route. Supports search, category, status, page, and pageSize filters. Returns paginated product rows with tag/category shaping.
-- `/api/dashboard/[businessId]/products/[id]`: authenticated selected-business Product update/delete route. `PATCH` updates full product data or status-only payloads; `DELETE` soft-deletes by status.
+- `/api/dashboard/[businessId]/products`: authenticated selected-business Product list/create route. Supports search, category, status, page, and pageSize filters. Returns paginated product rows with tag/category shaping plus pricing, inventory, weight, and image fields.
+- `/api/dashboard/[businessId]/products/[id]`: authenticated selected-business Product update/delete route. `PATCH` updates full product data, including `COST_PRICE`, `COMPARE_AS_PRICE`, inventory fields, `WEIGHT`, `WEIGHT_UNIT`, `PIC`, or status-only payloads; `DELETE` soft-deletes by status.
 - `/api/dashboard/[businessId]/categories`: authenticated selected-business Category list/create route. Returns category rows with tags and inferred product counts.
 - `/api/dashboard/[businessId]/categories/[id]`: authenticated selected-business Category update/delete route. Maintains `business_product_category_2_tag` assignments and soft-deletes by status.
 - `/api/dashboard/[businessId]/tags`: authenticated selected-business Tag list/create route. Returns tag rows with product/category counts.
 - `/api/dashboard/[businessId]/tags/[id]`: authenticated selected-business Tag update/delete route. `DELETE` soft-deletes the tag and removes bridge-table assignments.
-- `/api/dashboard/[businessId]/menu-cards`: authenticated selected-business Menu Card list/create route. `GET` returns all non-deleted cards with category count, product count, status, computed availability, and date range. `POST` creates a card or duplicates an existing card when given `duplicateFromId`.
-- `/api/dashboard/[businessId]/menu-cards/[cardId]`: authenticated selected-business Menu Card update/delete route. `PATCH` updates title, date range, and enabled status. `DELETE` removes the card and its bridge detail rows.
+- `/api/dashboard/[businessId]/menu-cards`: authenticated selected-business Menu Card list/create route. `GET` returns all non-deleted cards with category count, product count, status, computed availability, date range, `repeatWeekly`, `activeDays`, and `isUnlimited`. `POST` creates a card or duplicates an existing card when given `duplicateFromId`; duplicate preserves weekday scheduling fields.
+- `/api/dashboard/[businessId]/menu-cards/[cardId]`: authenticated selected-business Menu Card update/delete route. `PATCH` updates title, date range, enabled status, weekly repeat fields, active days, and daily unlimited state. `DELETE` removes the card and its bridge detail rows.
 - `/api/dashboard/[businessId]/menu-cards/[cardId]/details`: authenticated selected-business Menu Card detail list/create route. `GET` returns assigned categories, available categories, and read-only products from the menu-card detail view. `POST` assigns a category to the card.
 - `/api/dashboard/[businessId]/menu-cards/[cardId]/details/[detailId]`: authenticated selected-business Menu Card detail delete route. `DELETE` removes a category assignment from the card.
 - `/api/dashboard/[businessId]/menu-cards/[cardId]/details/reorder`: authenticated selected-business Menu Card detail reorder route. `PATCH` accepts `[ { detailId, displayOrder } ]`.
 - `/api/dashboard/[businessId]/orders`: authenticated selected-business Orders list route. Supports `status`, `dateFrom`, `dateTo`, `search`, `page`, and `limit`. It returns top-level `{ orders, totalCount, page, totalPages, kpi, prepDefaults }`. Order rows include customer fields aliased as `VISITOR_*`, order type, payment mode/status, `FINAL_AMOUNT`, financial summary values, `CREATION_DATETIME`, `DELIVERY_ET`, `ETA_ACKNOWLEDGED_DATETIME`, rejection fields, optional `STAFF_MEMBER`/`TERMINAL`, `item_count`, and all detail rows joined to `business_product` as `product_title`.
-- `/api/dashboard/[businessId]/orders/[orderId]/status`: authenticated selected-business order status update route. Accepts status transitions for delivery (`out_for_delivery`, `delivered`, `rejected`) and pickup (`ready_for_pickup`, `picked_up`, `rejected`), validates ownership, enforces lifecycle transitions, collects rejection reason/note, sets delivered/picked-up payment completion where applicable, and blocks Stripe/card-paid rejection until refund support exists.
+- `/api/dashboard/[businessId]/orders/[orderId]/status`: authenticated selected-business order status update route. Accepts status transitions for delivery (`out_for_delivery`, `delivered`, `rejected`) and pickup (`ready_for_pickup`, `picked_up`, `rejected`), validates ownership, enforces lifecycle transitions, collects rejection reason/note, finalizes/releases inventory where applicable, and creates a Stripe refund before rejecting paid Stripe/card orders. Delivered/picked-up status changes do not automatically mark unpaid cash orders paid.
 - `/api/dashboard/[businessId]/orders/[orderId]/eta`: authenticated selected-business ETA update route. `PATCH` accepts `{ eta: string }`, validates ownership, sets `DELIVERY_ET`, and marks `ETA_ACKNOWLEDGED_DATETIME`.
-- `/api/dashboard/[businessId]/orders/[orderId]/refund`: authenticated selected-business refund placeholder route. Returns `501` because Stripe refunds are not implemented until `STRIPE_PAYMENT_INTENT_ID` is stored.
+- `/api/dashboard/[businessId]/orders/[orderId]/payment`: authenticated selected-business payment update route. `PATCH` accepts `{ paymentDone: 1 }` only, validates ownership, and marks `PAYMENT_DONE = 1`; arbitrary payment-state writes are rejected.
+- `/api/dashboard/[businessId]/orders/[orderId]/refund`: authenticated selected-business Stripe refund route. It validates ownership, requires paid Stripe/card payment with `STRIPE_PAYMENT_INTENT_ID`, avoids duplicate refunds when refund fields already exist, creates a full refund through Stripe using `STRIPE_SECRET_KEY`, stores refund id/status/date and `ORDER_REFUND_AMOUNT`, and marks `PAYMENT_DONE = 2` only when Stripe reports `succeeded`.
 - `/api/dashboard/[businessId]/notifications`: authenticated selected-business notification list route. Supports `unreadOnly=true/false` and `limit`, removes expired rows, returns newest first plus unread count.
 - `/api/dashboard/[businessId]/notifications/[notificationId]/read`: authenticated selected-business notification read route. Marks one notification as read after owner access validation.
 - `/api/dashboard/[businessId]/notifications/read-all`: authenticated selected-business notification bulk read route. Marks all notifications for the business as read.
@@ -96,10 +101,11 @@ Existing API routes:
 - `/api/businesses/[businessId]/fulfillment-options`: public customer-facing fulfillment options route. Returns delivery/pickup enabled flags, pickup instructions, and default prep minutes.
 - `/api/businesses/[businessId]/delivery-quote`: public customer-facing delivery quote route. Uses `src/lib/fulfillment.ts` to match exact postal codes and wildcard prefix postal codes from `DELIVERY_ZONES_JSON`.
 - `/api/businesses/[businessId]/orders`: public customer-facing order creation route. Computes product subtotal server-side from active business products, validates delivery quotes for delivery orders, stores pickup orders without delivery fees, and writes `business_order` plus detail rows.
+- `/api/businesses/[businessId]/orders` also reserves tracked product inventory inside the same Prisma transaction as order/detail creation. If `TRACK_INVENTORY = 1` and `INVENTORY_AVAILABLE` is below the requested quantity, it rejects creation with `Only X left in stock for PRODUCT_TITLE`.
 
 Planned or visible-coming-soon areas:
 
-- Product inventory management appears to be planned beyond the current form fields.
+- Low-stock threshold logic is intentionally not implemented in the current product inventory workflow.
 
 ## Coding Conventions
 
@@ -131,28 +137,43 @@ Data and API patterns:
 - Product/category/tag deletes in the dashboard-scoped menu APIs are soft deletes through status values. Current menu queries exclude status `-1`; active/inactive use status `1`/`0`.
 - Menu Card status is separate from date availability. `STATUS = 1` means enabled, `STATUS = 0` means disabled, and date range determines Active/Scheduled/Expired availability. Do not show both Active and Inactive badges for the same card; disabled cards should show only Inactive in the admin list.
 - Multiple menu cards can be active for the same business and overlapping date ranges are valid. Do not add uniqueness constraints across `BUSINESS_ID`, `VALID_FROM`, or `VALID_TO`.
+- Menu Card weekday scheduling uses `business_food_menu_card.REPEAT_WEEKLY`, `ACTIVE_DAYS_JSON`, and `IS_UNLIMITED`. `ACTIVE_DAYS_JSON` is app-owned JSON text containing lowercase weekday keys such as `["monday","tuesday","friday"]`.
+- `src/services/menu-management.ts` normalizes menu card scheduling payloads. Daily unlimited forces `IS_UNLIMITED = 1`, `REPEAT_WEEKLY = 1`, `VALID_TO = NULL`, and `ACTIVE_DAYS_JSON = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]`; the menu stays active forever until the restaurant sets `STATUS` inactive.
+- Weekday repeat behavior treats `REPEAT_WEEKLY = 1` as recurring weekly on the selected weekdays in `ACTIVE_DAYS_JSON`. At least one active day is required when repeat weekly or daily unlimited is enabled. When repeat weekly is disabled, `ACTIVE_DAYS_JSON` is saved as `NULL` and the menu follows only date range plus status.
+- Admin menu-card availability is active today only when `STATUS` is active, today is on/after `VALID_FROM`, `VALID_TO` is null/unlimited/not past, and today's weekday is inside `ACTIVE_DAYS_JSON` when `REPEAT_WEEKLY = 1`. Keep this admin calculation aligned with any future customer-facing view SQL updates.
+- Keep date/status behavior compatible with existing menu card availability, and do not enforce one active menu per business.
 - Menu Card category changes in `MenuCardDetailManagement` are draft-first. Add, remove, and drag reorder update local UI only until the owner clicks Save Changes; Discard reloads the saved workspace.
 - Menu Card preview products come from `business_food_menu_card_detail_view` and are read-only. Customer-facing menu-card views should filter to enabled cards (`STATUS = 1`) and enabled detail rows.
 - Image replacement/deletion paths clean up old S3 objects through `S3Storage`.
 - Client forms call API routes with `fetch`, JSON bodies, and local loading/error state.
 - Product catalog interactions in `AdminProductsTable` use server actions from `admin-data.ts` for save, toggle status, and soft delete. Category and tag tables use the dashboard-scoped menu API routes.
+- Product create/update logic must save `business_product.COST_PRICE`, `PRODUCT_PRICE`, `COMPARE_AS_PRICE`, `TRACK_INVENTORY`, `INVENTORY_ON_HAND`, `INVENTORY_AVAILABLE`, `INVENTORY_COMMITED`, `WEIGHT`, `WEIGHT_UNIT`, and `PIC` through both the current `admin-data.ts` server-action path and the dashboard-scoped product API path in `menu-management.ts`.
+- Product prices are CHF and must be `>= 0`. `PRODUCT_PRICE` is required, `COST_PRICE` is internal admin-only, and `COMPARE_AS_PRICE` should be greater than `PRODUCT_PRICE` when set above zero.
+- Product inventory tracking uses `TRACK_INVENTORY = 1` only when the owner checks "Track inventory for this product". When unchecked, save `TRACK_INVENTORY = 0` and set `INVENTORY_ON_HAND`, `INVENTORY_AVAILABLE`, and `INVENTORY_COMMITED` to `0`. When checked, owners edit on-hand stock and the backend recalculates `INVENTORY_AVAILABLE = max(INVENTORY_ON_HAND - INVENTORY_COMMITED, 0)`.
+- Order inventory writes live in `src/lib/inventory.ts`. On order creation, tracked products reserve stock by decrementing `INVENTORY_AVAILABLE` and incrementing `INVENTORY_COMMITED` by `ORDER_QUANTITY`; untracked products do not change stock.
+- Admin order status updates call inventory helpers inside the same Prisma transaction as the `business_order` status update. Transitioning into delivered (`ORDER_STATUS = 3`) or picked up (`ORDER_STATUS = 6`) finalizes tracked stock by decrementing `INVENTORY_COMMITED` and `INVENTORY_ON_HAND`, while leaving `INVENTORY_AVAILABLE` unchanged from reservation; it does not automatically mark unpaid cash orders paid. Transitioning into rejected (`ORDER_STATUS = 4`) releases tracked stock by incrementing `INVENTORY_AVAILABLE` and decrementing `INVENTORY_COMMITED`, without changing `INVENTORY_ON_HAND`.
+- Inventory lifecycle updates rely on the existing status transition guard in `src/lib/orderStatus.ts` to avoid double finalization or double release. Helper math clamps counts so legacy/manual data cannot push `INVENTORY_ON_HAND` or `INVENTORY_COMMITED` below zero.
+- Product weight uses `WEIGHT` plus `WEIGHT_UNIT`; allowed units in the admin form are `gm`, `kg`, `ml`, and `l`, defaulting to `0 gm`.
 - Orders management uses API routes from the `AdminOrdersPage` client island because it needs filter/search pagination and modal-driven status updates.
 - Current order status mapping is `preparing = 1`, `out_for_delivery = 2`, `delivered = 3`, `rejected = 4`, `ready_for_pickup = 5`, and `picked_up = 6`. Valid delivery transitions are `preparing -> out_for_delivery`, `out_for_delivery -> delivered`, and `preparing -> rejected`. Valid pickup transitions are `preparing -> ready_for_pickup`, `ready_for_pickup -> picked_up`, and `preparing -> rejected`.
 - `business_order.ORDER_TYPE` distinguishes fulfillment mode. Allowed app values are `delivery` and `pickup`; default existing orders to `delivery`.
 - Do not add a separate payment-status column. Use `business_order.PAYMENT_DONE` with `0 = pending/unpaid`, `1 = paid`, `2 = refunded`, and `3 = failed`.
+- Admin payment labels are derived from `PAYMENT_DONE` plus `ORDER_TYPE`: `1 = Paid`, delivery `0 = Cash on delivery`, pickup `0 = Cash on pickup`, `2 = Refunded`, and `3 = Payment failed`. Restaurant operators mark real-life cash payments paid from the order details modal through `/payment`.
 - Use `business_order.DELIVERY_ET` for both estimated delivery time and estimated pickup time. Use `ETA_ACKNOWLEDGED_DATETIME` when the business owner confirms the ETA was seen/accepted.
 - Rejected orders can store structured admin context in `ORDER_REJECTION_REASON`, `ORDER_REJECTION_NOTE`, and `REJECTED_DATETIME`.
 - `src/lib/orderStatus.ts` is the shared source for order status constants, payment constants, labels, badge colors, allowed actions, Stripe/card-paid detection, and transition validation. Use it in admin/dashboard code instead of hand-mapping status numbers.
-- Stripe/card-paid orders with `PAYMENT_DONE = 1` must not be rejected directly. The admin refund endpoint currently returns `501` with the stored-payment-intent explanation; only COD/cash/pay-at-pickup unpaid orders can be rejected immediately.
+- Stripe/card-paid orders with `PAYMENT_DONE = 1` must be refunded before rejection. `updateOrderStatus` calls the shared refund logic first; if Stripe refund creation fails or `STRIPE_PAYMENT_INTENT_ID` is missing, the order stays unchanged. COD/cash/pay-at-pickup unpaid orders reject without a Stripe refund.
+- Stripe refunds are full-order refunds based on `ORDER_FINAL_AMOUNT`, converted to cents without floating-point multiplication. A `pending` Stripe refund stores `STRIPE_REFUND_STATUS` but keeps `PAYMENT_DONE = 1`; a `succeeded` refund sets `PAYMENT_DONE = 2`. Refund/reject actions are owner-initiated admin actions and must not create admin `business_notification` rows; customer-facing refund/rejection notifications belong in the separate `foodeez.ch` customer app.
+- Dashboard and Orders revenue KPIs use `countsAsRevenue` from `src/lib/orderStatus.ts`; rejected orders, refunded/failed payments, and orders with `STRIPE_REFUND_STATUS` do not count toward revenue totals.
 - Orders list filtering must not apply a default date range. The default route/UI state should show all existing orders unless `dateFrom`/`dateTo` are explicitly supplied.
 - `src/services/orders-management.ts` logs the raw Prisma `where` clause and distinct raw `ORDER_STATUS` values in development mode; keep that logging when working on order data bugs.
-- The selected-business dashboard recent-orders table uses the same order status mapping through `src/services/admin-data.ts`; never map `ORDER_STATUS = 4` to cancelled/rejected because it means delivered.
+- The selected-business dashboard recent-orders table uses the same order status mapping through `src/services/admin-data.ts`; `ORDER_STATUS = 4` means rejected.
 - `business_settings.DELIVERY_RANGE_ZIP_CODES` is retained for backward compatibility. New delivery-zone work should prefer `DELIVERY_ZONES_JSON`, with `DELIVERY_ENABLED`, `PICKUP_ENABLED`, `PICKUP_INSTRUCTIONS`, `DEFAULT_PICKUP_PREP_MINUTES`, and `DEFAULT_DELIVERY_PREP_MINUTES` for fulfillment settings.
 - Customer-facing fulfillment calculations belong in `src/lib/fulfillment.ts`. Reuse `calculateDeliveryQuote` for checkout and public quote APIs so delivery availability, free delivery, and minimum-order behavior stay identical.
 - Checkout order creation sets `ORDER_TYPE` to `delivery` or `pickup`, `ORDER_STATUS = 1`, `DELIVERY_ET = null`, and `ETA_ACKNOWLEDGED_DATETIME = null`. Delivery orders require `ADDRESS_ZIP`, validate it through `calculateDeliveryQuote`, and include `SHIPPING_CHARGES` in `ORDER_FINAL_AMOUNT`; pickup orders use `SHIPPING_CHARGES = 0`.
 - Payment state stays in `PAYMENT_DONE`: Stripe orders are saved as `1`; cash on delivery and pay-at-pickup orders start as `0`.
 - Business notifications live in `business_notification` and are scoped by `BUSINESS_ID`. Allowed app values for `NOTIFICATION_TYPE` are `order`, `refund`, `system`, `menu`, and `payment`; notification payload extras belong in `METADATA_JSON`.
-- `src/lib/businessNotifications.ts` owns notification creation. New checkout orders create an `order` notification with a dashboard orders link and order metadata; rejected orders create an `order` notification with the rejection reason.
+- `src/lib/businessNotifications.ts` owns admin notification creation. New checkout orders create an `order` notification with a dashboard orders link and order metadata. Owner-initiated refund/reject actions should not create admin notifications.
 
 Naming:
 
@@ -207,13 +228,14 @@ Dashboard components:
 
 Menu-card-management components:
 
-- `MenuCardsManagement` is the current selected-business menu-card list UI for `/dashboard/[businessId]/menu`. It owns client-side status tab filtering, create/edit modal state, duplicate/delete actions, and renders one badge per card: Inactive for disabled cards, otherwise Active/Scheduled/Expired from date availability.
+- `MenuCardsManagement` is the current selected-business menu-card list UI for `/dashboard/[businessId]/menu`. It owns client-side status tab filtering, create/edit modal state, duplicate/delete actions, daily unlimited/repeat weekly toggles, weekday chips, and renders one status badge per card: Inactive for disabled cards, otherwise Active/Scheduled/Expired from computed availability. Cards also show Daily unlimited and Repeat weekly badges, selected weekday chips, date range, category count, product count, and Manage.
 - `MenuCardDetailManagement` is the selected-business menu-card detail client island for `/dashboard/[businessId]/menu/[cardId]`. It owns local draft state for available categories, assigned categories, removals, drag order, Save Changes, Discard, expanded category rows, and the customer preview modal.
 - Menu cards contain categories through `business_food_menu_card_detail`; categories contain products indirectly through the existing category-tag and product-tag inference. Do not add a direct product assignment table for menu cards.
 
 Product-management components:
 
-- `AdminProductsTable` is the current Shopify-style product catalog UI for `/dashboard/[businessId]/menu/products`. It receives server-fetched rows and category options, then handles search, category filter, sorting, add/edit modal, status toggle, and delete as a client island.
+- `AdminProductsTable` is the current Shopify-style product catalog UI for `/dashboard/[businessId]/menu/products`. It receives server-fetched rows and category options, then handles search, category filter, sorting, add/edit modal, status toggle, and delete as a client island. The table shows image thumbnail, product name, inferred category, selling price, compare-at price when set, stock status, status, and actions.
+- The current product form uses `ProductForm` inside the admin modal and legacy add/edit pages. Its product details, pricing, inventory, weight, image, and tags sections must stay consistent across those surfaces. Cost price helper text is "Cost price is only visible to your business." Compare-at helper text is "Compare-at price appears as a strikethrough price on the customer menu."
 - Product images use the real schema field `business_product.PIC`, mapped by `src/services/admin-data.ts` to `AdminProductRow.imageUrl`. Product table thumbnails should use that `imageUrl` alias with `resolveMediaUrl`, rounded 40-48px object-cover display, product-title alt text, and a placeholder fallback.
 - Product category display/filtering in `AdminProductsTable` is inferred from overlapping product tags and category tags because `business_product` does not have a direct category foreign key.
 - `CategoryTable` and `TagsTable` are current selected-business client islands for category/tag management and expect server-provided rows from `menu-management.ts`.
@@ -230,14 +252,16 @@ Settings components:
 
 Orders-management components:
 
-- `AdminOrdersPage` is the Shopify-style Orders UI for `/dashboard/[businessId]/orders`. It owns client-side filter state, pagination state, row action dropdowns, and the order detail modal.
-- Orders list and status changes are fetched through `/api/dashboard/[businessId]/orders` and `/api/dashboard/[businessId]/orders/[orderId]/status`.
+- `AdminOrdersPage` is the Shopify-style Orders UI for `/dashboard/[businessId]/orders`. It owns client-side filter state, pagination state, row action dropdowns, payment/ETA updates, and the order detail modal.
+- Orders list, status changes, ETA edits, and payment confirmation are fetched through `/api/dashboard/[businessId]/orders`, `/api/dashboard/[businessId]/orders/[orderId]/status`, `/api/dashboard/[businessId]/orders/[orderId]/eta`, and `/api/dashboard/[businessId]/orders/[orderId]/payment`.
 - Orders list defaults to all dates so the table does not hide existing historical orders; users can still filter to Today, Last 7 days, or Custom.
-- Orders table columns are Order #, Customer with phone below, Items summary, Total from `FINAL_AMOUNT`, Payment from `PAYMENT_MODE`, Status badge, Ordered at, and Actions.
-- Order detail modal displays order ID, order type, status badge/action buttons, placed time, estimated delivery/pickup time, payment mode/status, optional staff/terminal, rejection reason/note when rejected, full customer contact/address fields, financial summary (`GROSS_AMOUNT`, `DISCOUNT_AMOUNT`, `SHIPPING_AMOUNT`, `TAX_AMOUNT`, `REFUND_AMOUNT`, `FINAL_AMOUNT`), and item rows with product name, quantity, unit price, discount, and computed subtotal.
+- Orders table columns are Order #, Customer with phone below, Order type, Items, Total from `FINAL_AMOUNT`, Payment status badge, Status badge, ETA, Ordered at, and Actions. Do not show `PAYMENT_MODE` in the table.
+- Orders table payment status shows `Refund pending` when `STRIPE_REFUND_STATUS` exists but `PAYMENT_DONE` is not yet refunded. Payment mode and Stripe payment intent stay in the details modal only.
+- Orders table ETA shows time only (`HH:mm`). If `DELIVERY_ET` is null, calculate the display from `CREATION_DATETIME` plus the delivery or pickup prep default and show a subtle `Default` badge; keep the date internal.
+- Order detail modal displays order ID, order type, status badge/action buttons, placed time, estimated delivery/pickup time with editable `datetime-local` input, payment mode/status, optional staff/terminal, rejection reason/note when rejected, full customer contact/address fields, payment details (`GROSS_AMOUNT`, `DISCOUNT_AMOUNT`, `SHIPPING_AMOUNT`, `TAX_AMOUNT`, `REFUND_AMOUNT`, `FINAL_AMOUNT`), and item rows with product name, quantity, unit price, discount, and computed subtotal.
 - Pickup orders should use the same order detail surface but label `DELIVERY_ET` as estimated pickup time. Delivery orders should continue to label it as estimated delivery time.
-- New preparing orders with `ETA_ACKNOWLEDGED_DATETIME = null` trigger a blocking ETA modal on the Orders page. The modal pre-fills from business settings default prep minutes and saves through the ETA endpoint.
-- Orders management polls the orders API every 30 seconds without resetting selected filters. While an unacknowledged ETA order is active, the page uses a Web Audio API beep every 10 seconds until ETA is saved; show the small enable-sound button when browser autoplay blocks audio.
+- New preparing orders with `ETA_ACKNOWLEDGED_DATETIME = null` must not trigger a blocking ETA popup. Keep notification/polling behavior, but ETA is edited from the order details modal when needed.
+- Orders management polls the orders API every 30 seconds without resetting selected filters.
 - Order status badges should use the shared helper colors: preparing blue, out-for-delivery/ready-for-pickup purple, delivered/picked-up green, rejected red.
 - Dashboard recent-order badges should use the same status mapping as the Orders page through `src/lib/orderStatus.ts`.
 

@@ -250,6 +250,9 @@ model business_food_menu_card {
   VALID_FROM                 DateTime? @db.DateTime(0)
   VALID_TO                   DateTime? @db.DateTime(0)
   STATUS                     Int       @default(1) @db.TinyInt
+  REPEAT_WEEKLY              Int       @default(0) @db.TinyInt
+  ACTIVE_DAYS_JSON           String?   @db.LongText
+  IS_UNLIMITED               Int       @default(0) @db.TinyInt
 }
 
 model business_food_menu_card_detail {
@@ -262,38 +265,46 @@ model business_food_menu_card_detail {
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model business_order {
-  BUSINESS_ORDER_ID         Int       @id
-  CREATION_DATETIME         DateTime? @db.DateTime(0)
-  BUSINESS_ID               Int?
-  VISITOR_ID                Int?      @default(0)
-  PAYMENT_DONE              Int?      @default(1) @db.TinyInt
-  PAYMENT_MODE              String?   @db.VarChar(45)
-  DELIVERY_ET               DateTime? @db.DateTime(0)
-  ORDER_STATUS              Int?      @default(1)
-  DELIVERY_DATETIME         DateTime? @db.DateTime(0)
-  TERMINAL                  String?   @db.VarChar(100)
-  STAFF_MEMBER              String?   @db.VarChar(100)
-  FIRST_NAME                String?   @db.VarChar(100)
-  LAST_NAME                 String?   @db.VarChar(100)
-  ADDRESS_STREET            String?   @db.VarChar(100)
-  ADDRESS_ZIP               String?   @db.VarChar(10)
-  ADDRESS_TOWN              String?   @db.VarChar(100)
-  ADDRESS_COUNTRY_CODE      String?   @default("CH") @db.VarChar(45)
-  PHONE_NUMBER              String?   @db.VarChar(20)
-  EMAIL_ADDRESS             String?   @db.VarChar(255)
-  ORDER_GROSS_AMOUNT        Decimal?  @default(0.00) @db.Decimal(8, 2)
-  ORDER_TAX_AMOUNT          Decimal?  @default(0.00) @db.Decimal(8, 2)
-  ORDER_NET_AMOUNT          Decimal?  @default(0.00) @db.Decimal(8, 2)
-  ORDER_DISCOUNT_AMOUNT     Decimal?  @default(0.00) @db.Decimal(8, 2)
-  ORDER_AMOUNT              Decimal?  @default(0.00) @db.Decimal(8, 2)
-  SHIPPING_CHARGES          Decimal?  @default(0.00) @db.Decimal(8, 2)
-  ORDER_REFUND_AMOUNT       Decimal?  @default(0.00) @db.Decimal(8, 2)
-  ORDER_FINAL_AMOUNT        Decimal?  @default(0.00) @db.Decimal(8, 2)
-  ORDER_TYPE                String    @default("delivery") @db.VarChar(20)
-  ORDER_REJECTION_REASON    String?   @db.VarChar(100)
-  ORDER_REJECTION_NOTE      String?   @db.Text
-  REJECTED_DATETIME         DateTime? @db.DateTime(0)
-  ETA_ACKNOWLEDGED_DATETIME DateTime? @db.DateTime(0)
+  BUSINESS_ORDER_ID          Int       @id
+  CREATION_DATETIME          DateTime? @db.DateTime(0)
+  BUSINESS_ID                Int?
+  VISITOR_ID                 Int?      @default(0)
+  PAYMENT_DONE               Int?      @default(1) @db.TinyInt
+  PAYMENT_MODE               String?   @db.VarChar(45)
+  DELIVERY_ET                DateTime? @db.DateTime(0)
+  ORDER_STATUS               Int?      @default(1)
+  DELIVERY_DATETIME          DateTime? @db.DateTime(0)
+  TERMINAL                   String?   @db.VarChar(100)
+  STAFF_MEMBER               String?   @db.VarChar(100)
+  FIRST_NAME                 String?   @db.VarChar(100)
+  LAST_NAME                  String?   @db.VarChar(100)
+  ADDRESS_STREET             String?   @db.VarChar(100)
+  ADDRESS_ZIP                String?   @db.VarChar(10)
+  ADDRESS_TOWN               String?   @db.VarChar(100)
+  ADDRESS_COUNTRY_CODE       String?   @default("CH") @db.VarChar(45)
+  PHONE_NUMBER               String?   @db.VarChar(20)
+  EMAIL_ADDRESS              String?   @db.VarChar(255)
+  ORDER_GROSS_AMOUNT         Decimal?  @default(0.00) @db.Decimal(8, 2)
+  ORDER_TAX_AMOUNT           Decimal?  @default(0.00) @db.Decimal(8, 2)
+  ORDER_NET_AMOUNT           Decimal?  @default(0.00) @db.Decimal(8, 2)
+  ORDER_DISCOUNT_AMOUNT      Decimal?  @default(0.00) @db.Decimal(8, 2)
+  ORDER_AMOUNT               Decimal?  @default(0.00) @db.Decimal(8, 2)
+  SHIPPING_CHARGES           Decimal?  @default(0.00) @db.Decimal(8, 2)
+  ORDER_REFUND_AMOUNT        Decimal?  @default(0.00) @db.Decimal(8, 2)
+  ORDER_FINAL_AMOUNT         Decimal?  @default(0.00) @db.Decimal(8, 2)
+  ORDER_TYPE                 String    @default("delivery") @db.VarChar(20)
+  ORDER_REJECTION_REASON     String?   @db.VarChar(100)
+  ORDER_REJECTION_NOTE       String?   @db.Text
+  REJECTED_DATETIME          DateTime? @db.DateTime(0)
+  ETA_ACKNOWLEDGED_DATETIME  DateTime? @db.DateTime(0)
+  STRIPE_CHECKOUT_SESSION_ID String?   @db.VarChar(255)
+  STRIPE_PAYMENT_INTENT_ID   String?   @db.VarChar(255)
+  STRIPE_REFUND_ID           String?   @db.VarChar(255)
+  STRIPE_REFUND_STATUS       String?   @db.VarChar(50)
+  STRIPE_REFUNDED_DATETIME   DateTime? @db.DateTime(0)
+
+  @@index([STRIPE_CHECKOUT_SESSION_ID], map: "STRIPE_CHECKOUT_SESSION_ID")
+  @@index([STRIPE_PAYMENT_INTENT_ID], map: "STRIPE_PAYMENT_INTENT_ID")
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
