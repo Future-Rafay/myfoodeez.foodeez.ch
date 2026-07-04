@@ -37,8 +37,16 @@ export default function EditProductPage() {
     title: string;
     description: string;
     product_price: string;
+    cost_price: string;
+    compare_as_price: string;
+    track_inventory: boolean;
+    inventory_on_hand: string;
+    inventory_commited: string;
+    weight: string;
+    weight_unit: string;
     pic: string;
     tag_ids: number[];
+    categoryId: number | null;
   }) {
     setSaving(true);
     setError("");
@@ -50,8 +58,16 @@ export default function EditProductPage() {
           title: values.title,
           description: values.description,
           product_price: values.product_price,
+          cost_price: values.cost_price,
+          compare_as_price: values.compare_as_price,
+          track_inventory: values.track_inventory,
+          inventory_on_hand: values.inventory_on_hand,
+          inventory_commited: values.inventory_commited,
+          weight: values.weight,
+          weight_unit: values.weight_unit,
           pic: values.pic,
           tag_ids: values.tag_ids,
+          categoryId: values.categoryId,
         }),
       });
       if (!res.ok) {
@@ -90,6 +106,14 @@ export default function EditProductPage() {
           title: product.title,
           description: product.description,
           product_price: product.productPrice,
+          cost_price: product.costPrice,
+          compare_as_price: product.compareAtPrice,
+          track_inventory: product.trackInventory,
+          inventory_on_hand: product.inventoryOnHand,
+          inventory_available: product.inventoryAvailable,
+          inventory_commited: product.inventoryCommitted,
+          weight: product.weight,
+          weight_unit: product.weightUnit,
           pic: product.pic,
           tag_ids: product.tagIds || [],
           categoryId: product.categoryId,

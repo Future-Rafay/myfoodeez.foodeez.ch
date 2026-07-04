@@ -34,9 +34,17 @@ export type MenuProductRow = {
   title: string;
   description: string | null;
   productPrice: number;
+  costPrice: number;
+  compareAtPrice: number;
   pic: string | null;
   status: EntityStatus;
   stock: number;
+  trackInventory: boolean;
+  inventoryOnHand: number;
+  inventoryAvailable: number;
+  inventoryCommitted: number;
+  weight: number;
+  weightUnit: string;
   categoryId: number | null;
   categoryName: string;
   tagIds: number[];
@@ -63,6 +71,9 @@ export type MenuCardRow = {
   validTo: string | null;
   status: MenuCardRecordStatus;
   availability: MenuCardAvailability;
+  repeatWeekly: boolean;
+  activeDays: WeekdayKey[];
+  isUnlimited: boolean;
   categoryCount: number;
   productCount: number;
 };
@@ -98,6 +109,17 @@ export type MenuCardWorkspace = {
 };
 
 const DELETED_STATUS = -1;
+export const WEEKDAY_KEYS = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+export type WeekdayKey = (typeof WEEKDAY_KEYS)[number];
+const WEEKDAY_SET = new Set<string>(WEEKDAY_KEYS);
 
 function toNumber(value: unknown) {
   if (value && typeof value === "object" && "toNumber" in value) {
@@ -166,14 +188,58 @@ function parseDateInput(value: unknown, fieldName: string, endOfDay = false) {
   return date;
 }
 
+function isEnabled(value: unknown) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function parseActiveDaysJson(value?: string | null): WeekdayKey[] {
+  if (!value) return [];
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(
+      (day): day is WeekdayKey =>
+        typeof day === "string" && WEEKDAY_SET.has(day)
+    );
+  } catch {
+    return [];
+  }
+}
+
+function normalizeActiveDays(values: unknown): WeekdayKey[] {
+  if (!Array.isArray(values)) return [];
+
+  return Array.from(
+    new Set(
+      values.filter(
+        (day): day is WeekdayKey =>
+          typeof day === "string" && WEEKDAY_SET.has(day)
+      )
+    )
+  );
+}
+
+function todayWeekdayKey(): WeekdayKey {
+  const index = new Date().getDay();
+  return WEEKDAY_KEYS[index === 0 ? 6 : index - 1];
+}
+
 function computeMenuCardAvailability(
   validFrom: string | null,
-  validTo: string | null
+  validTo: string | null,
+  isUnlimited = false,
+  repeatWeekly = false,
+  activeDays: WeekdayKey[] = []
 ): MenuCardAvailability {
   const today = toDateValue(new Date()) || "";
 
   if (validFrom && validFrom > today) return "scheduled";
-  if (validTo && validTo < today) return "expired";
+  if (!isUnlimited && validTo && validTo < today) return "expired";
+  if (repeatWeekly && !activeDays.includes(todayWeekdayKey())) {
+    return "scheduled";
+  }
 
   return "active";
 }
@@ -183,6 +249,9 @@ function normalizeMenuCardValues(values: {
   validFrom?: unknown;
   validTo?: unknown;
   status?: unknown;
+  repeatWeekly?: unknown;
+  activeDays?: unknown;
+  isUnlimited?: unknown;
 }) {
   const title = String(values.title || "").trim();
 
@@ -192,10 +261,21 @@ function normalizeMenuCardValues(values: {
   }
 
   const validFrom = parseDateInput(values.validFrom, "Valid from");
-  const validTo = parseDateInput(values.validTo, "Valid to", true);
+  const isUnlimited = isEnabled(values.isUnlimited);
+  const repeatWeekly = isUnlimited || isEnabled(values.repeatWeekly);
+  const activeDays = isUnlimited
+    ? [...WEEKDAY_KEYS]
+    : normalizeActiveDays(values.activeDays);
+  const validTo = isUnlimited
+    ? null
+    : parseDateInput(values.validTo, "Valid to", true);
 
-  if (validFrom.getTime() > validTo.getTime()) {
+  if (validTo && validFrom.getTime() > validTo.getTime()) {
     throw new Error("Valid from must be before valid to.");
+  }
+
+  if ((repeatWeekly || isUnlimited) && !activeDays.length) {
+    throw new Error("Select at least one active day.");
   }
 
   return {
@@ -203,6 +283,9 @@ function normalizeMenuCardValues(values: {
     validFrom,
     validTo,
     status: statusCode(String(values.status || "active")) ?? 1,
+    repeatWeekly: repeatWeekly ? 1 : 0,
+    activeDaysJson: repeatWeekly ? JSON.stringify(activeDays) : null,
+    isUnlimited: isUnlimited ? 1 : 0,
   };
 }
 
@@ -216,6 +299,91 @@ function uniqueIds(values: unknown) {
         .filter((value) => Number.isInteger(value) && value > 0)
     )
   );
+}
+
+function parseMoneyInput(value: unknown, fieldName: string, required = false) {
+  const text = String(value ?? "").trim();
+
+  if (!text && !required) return "0";
+
+  const amount = Number(text);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`${fieldName} must be 0 or more.`);
+  }
+
+  return text || "0";
+}
+
+function parseWholeNumberInput(value: unknown, fieldName: string) {
+  const amount = Number(String(value ?? "0").trim() || "0");
+
+  if (!Number.isInteger(amount) || amount < 0) {
+    throw new Error(`${fieldName} must be a whole number 0 or more.`);
+  }
+
+  return amount;
+}
+
+function normalizeWeightUnit(value: unknown) {
+  const unit = String(value || "gm");
+  return ["gm", "kg", "ml", "l"].includes(unit) ? unit : "gm";
+}
+
+function normalizeProductValues(values: {
+  title?: unknown;
+  description?: unknown;
+  product_price?: unknown;
+  cost_price?: unknown;
+  compare_as_price?: unknown;
+  track_inventory?: unknown;
+  inventory_on_hand?: unknown;
+  inventory_commited?: unknown;
+  weight?: unknown;
+  weight_unit?: unknown;
+  pic?: unknown;
+}) {
+  const title = String(values.title || "").trim();
+  const price = parseMoneyInput(values.product_price, "Product price", true);
+  const costPrice = parseMoneyInput(values.cost_price, "Cost price");
+  const compareAtPrice = parseMoneyInput(
+    values.compare_as_price,
+    "Compare-at price"
+  );
+
+  if (!title) throw new Error("Product name and price are required.");
+  if (title.length > 100) {
+    throw new Error("Product name must be at most 100 characters.");
+  }
+  if (Number(compareAtPrice) > 0 && Number(compareAtPrice) <= Number(price)) {
+    throw new Error("Compare-at price should be greater than product price.");
+  }
+
+  const trackInventory =
+    values.track_inventory === true ||
+    values.track_inventory === "true" ||
+    values.track_inventory === 1 ||
+    values.track_inventory === "1";
+  const committed = trackInventory
+    ? parseWholeNumberInput(values.inventory_commited, "Committed inventory")
+    : 0;
+  const onHand = trackInventory
+    ? parseWholeNumberInput(values.inventory_on_hand, "Stock quantity")
+    : 0;
+
+  return {
+    title,
+    description: String(values.description || "").trim() || null,
+    productPrice: price,
+    costPrice,
+    compareAtPrice,
+    trackInventory,
+    inventoryOnHand: onHand,
+    inventoryAvailable: trackInventory ? Math.max(onHand - committed, 0) : 0,
+    inventoryCommitted: committed,
+    weight: parseWholeNumberInput(values.weight, "Weight"),
+    weightUnit: normalizeWeightUnit(values.weight_unit),
+    pic: String(values.pic || "").trim() || null,
+  };
 }
 
 function parsePositiveInt(value: unknown, fallback: number) {
@@ -359,6 +527,9 @@ type RawMenuCard = {
   VALID_FROM: Date | null;
   VALID_TO: Date | null;
   STATUS: number | null;
+  REPEAT_WEEKLY: number | null;
+  ACTIVE_DAYS_JSON: string | null;
+  IS_UNLIMITED: number | null;
 };
 
 async function getOwnedMenuCard(businessId: number, cardId: number) {
@@ -384,6 +555,9 @@ function mapMenuCardRow(
 ): MenuCardRow {
   const validFrom = toDateValue(card.VALID_FROM);
   const validTo = toDateValue(card.VALID_TO);
+  const repeatWeekly = card.REPEAT_WEEKLY === 1;
+  const isUnlimited = card.IS_UNLIMITED === 1;
+  const activeDays = parseActiveDaysJson(card.ACTIVE_DAYS_JSON);
 
   return {
     id: card.BUSINESS_FOOD_MENU_CARD_ID,
@@ -391,7 +565,16 @@ function mapMenuCardRow(
     validFrom,
     validTo,
     status: mapMenuCardStatus(card.STATUS),
-    availability: computeMenuCardAvailability(validFrom, validTo),
+    availability: computeMenuCardAvailability(
+      validFrom,
+      validTo,
+      isUnlimited,
+      repeatWeekly,
+      activeDays
+    ),
+    repeatWeekly,
+    activeDays,
+    isUnlimited,
     categoryCount,
     productCount,
   };
@@ -787,9 +970,17 @@ export async function listMenuProducts({
       title: product.TITLE,
       description: product.DESCRIPTION,
       productPrice: toNumber(product.PRODUCT_PRICE),
+      costPrice: toNumber(product.COST_PRICE),
+      compareAtPrice: toNumber(product.COMPARE_AS_PRICE),
       pic: product.PIC,
       status: mapStatus(product.STATUS),
       stock: product.INVENTORY_AVAILABLE ?? product.INVENTORY_ON_HAND ?? 0,
+      trackInventory: product.TRACK_INVENTORY === 1,
+      inventoryOnHand: product.INVENTORY_ON_HAND ?? 0,
+      inventoryAvailable: product.INVENTORY_AVAILABLE ?? 0,
+      inventoryCommitted: product.INVENTORY_COMMITED ?? 0,
+      weight: product.WEIGHT ?? 0,
+      weightUnit: product.WEIGHT_UNIT || "gm",
       categoryId: matchedCategory?.BUSINESS_PRODUCT_CATEGORY_ID || null,
       categoryName: matchedCategory?.TITLE || "Uncategorized",
       tagIds,
@@ -826,6 +1017,13 @@ export async function createMenuProduct(
     title?: unknown;
     description?: unknown;
     product_price?: unknown;
+    cost_price?: unknown;
+    compare_as_price?: unknown;
+    track_inventory?: unknown;
+    inventory_on_hand?: unknown;
+    inventory_commited?: unknown;
+    weight?: unknown;
+    weight_unit?: unknown;
     pic?: unknown;
     tag_ids?: unknown;
     categoryId?: unknown;
@@ -833,11 +1031,7 @@ export async function createMenuProduct(
 ) {
   await requireMenuBusinessAccess(businessId);
 
-  const title = String(values.title || "").trim();
-  const price = String(values.product_price || "").trim();
-  if (!title || !price) throw new Error("Product name and price are required.");
-  if (title.length > 100) throw new Error("Product name must be at most 100 characters.");
-  if (!Number.isFinite(Number(price))) throw new Error("Product price must be valid.");
+  const normalized = normalizeProductValues(values);
 
   const categoryId = Number(values.categoryId);
   const explicitTagIds = uniqueIds(values.tag_ids);
@@ -852,10 +1046,18 @@ export async function createMenuProduct(
     const product = await tx.business_product.create({
       data: {
         BUSINESS_ID: businessId,
-        TITLE: title,
-        DESCRIPTION: String(values.description || "").trim() || null,
-        PRODUCT_PRICE: price,
-        PIC: String(values.pic || "").trim() || null,
+        TITLE: normalized.title,
+        DESCRIPTION: normalized.description,
+        PRODUCT_PRICE: normalized.productPrice,
+        COST_PRICE: normalized.costPrice,
+        COMPARE_AS_PRICE: normalized.compareAtPrice,
+        TRACK_INVENTORY: normalized.trackInventory ? 1 : 0,
+        INVENTORY_ON_HAND: normalized.inventoryOnHand,
+        INVENTORY_AVAILABLE: normalized.inventoryAvailable,
+        INVENTORY_COMMITED: normalized.inventoryCommitted,
+        WEIGHT: normalized.weight,
+        WEIGHT_UNIT: normalized.weightUnit,
+        PIC: normalized.pic,
         STATUS: 1,
         CREATION_DATETIME: new Date(),
       },
@@ -882,6 +1084,13 @@ export async function updateMenuProduct(
     title?: unknown;
     description?: unknown;
     product_price?: unknown;
+    cost_price?: unknown;
+    compare_as_price?: unknown;
+    track_inventory?: unknown;
+    inventory_on_hand?: unknown;
+    inventory_commited?: unknown;
+    weight?: unknown;
+    weight_unit?: unknown;
     pic?: unknown;
     status?: unknown;
     tag_ids?: unknown;
@@ -891,11 +1100,7 @@ export async function updateMenuProduct(
   await requireMenuBusinessAccess(businessId);
   await getOwnedProduct(businessId, productId);
 
-  const title = String(values.title || "").trim();
-  const price = String(values.product_price || "").trim();
-  if (!title || !price) throw new Error("Product name and price are required.");
-  if (title.length > 100) throw new Error("Product name must be at most 100 characters.");
-  if (!Number.isFinite(Number(price))) throw new Error("Product price must be valid.");
+  const normalized = normalizeProductValues(values);
 
   const categoryId = Number(values.categoryId);
   const explicitTagIds = uniqueIds(values.tag_ids);
@@ -911,10 +1116,18 @@ export async function updateMenuProduct(
     const product = await tx.business_product.update({
       where: { BUSINESS_PRODUCT_ID: productId },
       data: {
-        TITLE: title,
-        DESCRIPTION: String(values.description || "").trim() || null,
-        PRODUCT_PRICE: price,
-        PIC: String(values.pic || "").trim() || null,
+        TITLE: normalized.title,
+        DESCRIPTION: normalized.description,
+        PRODUCT_PRICE: normalized.productPrice,
+        COST_PRICE: normalized.costPrice,
+        COMPARE_AS_PRICE: normalized.compareAtPrice,
+        TRACK_INVENTORY: normalized.trackInventory ? 1 : 0,
+        INVENTORY_ON_HAND: normalized.inventoryOnHand,
+        INVENTORY_AVAILABLE: normalized.inventoryAvailable,
+        INVENTORY_COMMITED: normalized.inventoryCommitted,
+        WEIGHT: normalized.weight,
+        WEIGHT_UNIT: normalized.weightUnit,
+        PIC: normalized.pic,
         ...(nextStatus !== null ? { STATUS: nextStatus } : {}),
       },
     });
@@ -1245,6 +1458,9 @@ async function duplicateMenuCard(businessId: number, sourceCardId: number) {
         VALID_FROM: source.VALID_FROM,
         VALID_TO: source.VALID_TO,
         STATUS: source.STATUS === 0 ? 0 : 1,
+        REPEAT_WEEKLY: source.REPEAT_WEEKLY === 1 ? 1 : 0,
+        ACTIVE_DAYS_JSON: source.ACTIVE_DAYS_JSON,
+        IS_UNLIMITED: source.IS_UNLIMITED === 1 ? 1 : 0,
       },
     });
 
@@ -1276,6 +1492,9 @@ export async function createMenuCard(
     validFrom?: unknown;
     validTo?: unknown;
     status?: unknown;
+    repeatWeekly?: unknown;
+    activeDays?: unknown;
+    isUnlimited?: unknown;
     duplicateFromId?: unknown;
   }
 ) {
@@ -1295,6 +1514,9 @@ export async function createMenuCard(
       VALID_FROM: normalized.validFrom,
       VALID_TO: normalized.validTo,
       STATUS: normalized.status,
+      REPEAT_WEEKLY: normalized.repeatWeekly,
+      ACTIVE_DAYS_JSON: normalized.activeDaysJson,
+      IS_UNLIMITED: normalized.isUnlimited,
     },
   });
 
@@ -1312,6 +1534,9 @@ export async function updateMenuCard(
     validFrom?: unknown;
     validTo?: unknown;
     status?: unknown;
+    repeatWeekly?: unknown;
+    activeDays?: unknown;
+    isUnlimited?: unknown;
   }
 ) {
   await requireMenuBusinessAccess(businessId);
@@ -1326,6 +1551,9 @@ export async function updateMenuCard(
       VALID_FROM: normalized.validFrom,
       VALID_TO: normalized.validTo,
       STATUS: normalized.status,
+      REPEAT_WEEKLY: normalized.repeatWeekly,
+      ACTIVE_DAYS_JSON: normalized.activeDaysJson,
+      IS_UNLIMITED: normalized.isUnlimited,
     },
   });
 

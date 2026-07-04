@@ -154,6 +154,13 @@ export default function AdminProductsTable({
     title: string;
     description: string;
     product_price: string;
+    cost_price: string;
+    compare_as_price: string;
+    track_inventory: boolean;
+    inventory_on_hand: string;
+    inventory_commited: string;
+    weight: string;
+    weight_unit: string;
     pic: string;
     tag_ids: number[];
     categoryId: number | null;
@@ -347,8 +354,21 @@ export default function AdminProductsTable({
                       </div>
                     </TableCell>
                     <TableCell>{product.categoryName}</TableCell>
-                    <TableCell>{currencyFormatter.format(product.price)}</TableCell>
-                    <TableCell>{product.stock}</TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <p className="font-medium text-gray-950">
+                          {currencyFormatter.format(product.price)}
+                        </p>
+                        {product.compareAtPrice > 0 && (
+                          <p className="text-sm text-gray-400 line-through">
+                            {currencyFormatter.format(product.compareAtPrice)}
+                          </p>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <StockStatus product={product} />
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant="outline"
@@ -473,6 +493,14 @@ export default function AdminProductsTable({
                       title: selectedProduct.name,
                       description: selectedProduct.description || "",
                       product_price: selectedProduct.price,
+                      cost_price: selectedProduct.costPrice,
+                      compare_as_price: selectedProduct.compareAtPrice,
+                      track_inventory: selectedProduct.trackInventory,
+                      inventory_on_hand: selectedProduct.inventoryOnHand,
+                      inventory_available: selectedProduct.inventoryAvailable,
+                      inventory_commited: selectedProduct.inventoryCommitted,
+                      weight: selectedProduct.weight,
+                      weight_unit: selectedProduct.weightUnit,
                       pic: selectedProduct.imageUrl || "",
                       tag_ids: selectedProduct.tagIds,
                       categoryId: selectedProduct.categoryId,
@@ -515,6 +543,27 @@ export default function AdminProductsTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function StockStatus({ product }: { product: AdminProductRow }) {
+  if (!product.trackInventory) return <span className="text-gray-400">-</span>;
+
+  return (
+    <div className="space-y-0.5 text-xs text-gray-600">
+      <p>
+        <span className="font-medium text-gray-900">Available:</span>{" "}
+        {product.inventoryAvailable}
+      </p>
+      <p>
+        <span className="font-medium text-gray-900">On hand:</span>{" "}
+        {product.inventoryOnHand}
+      </p>
+      <p>
+        <span className="font-medium text-gray-900">Committed:</span>{" "}
+        {product.inventoryCommitted}
+      </p>
     </div>
   );
 }

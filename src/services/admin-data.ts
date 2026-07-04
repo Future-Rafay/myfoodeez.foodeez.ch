@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { normalizeOrderStatus, type OrderStatusName } from "@/lib/orderStatus";
+import {
+  countsAsRevenue,
+  normalizeOrderStatus,
+  type OrderStatusName,
+} from "@/lib/orderStatus";
 import prisma from "@/lib/prisma";
 import { S3Storage } from "@/lib/s3-storage";
 
@@ -47,7 +51,15 @@ export type AdminProductRow = {
   categoryId: number | null;
   categoryName: string;
   price: number;
+  costPrice: number;
+  compareAtPrice: number;
   stock: number;
+  trackInventory: boolean;
+  inventoryOnHand: number;
+  inventoryAvailable: number;
+  inventoryCommitted: number;
+  weight: number;
+  weightUnit: string;
   status: "active" | "inactive";
   imageUrl: string | null;
   tagIds: number[];
@@ -59,6 +71,13 @@ export type ProductFormValues = {
   title: string;
   description: string;
   product_price: string;
+  cost_price?: string;
+  compare_as_price?: string;
+  track_inventory?: boolean;
+  inventory_on_hand?: string;
+  inventory_commited?: string;
+  weight?: string;
+  weight_unit?: string;
   pic: string;
   tag_ids: number[];
   categoryId?: number | null;
@@ -70,6 +89,33 @@ function toNumber(value: unknown) {
   }
 
   return Number(value ?? 0);
+}
+
+function parseMoney(value: string | undefined, fieldName: string, required = false) {
+  const text = String(value ?? "").trim();
+
+  if (!text && !required) return 0;
+
+  const amount = Number(text);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`${fieldName} must be 0 or more.`);
+  }
+
+  return text || "0";
+}
+
+function parseWholeNumber(value: string | undefined, fieldName: string) {
+  const amount = Number(String(value ?? "0").trim() || "0");
+
+  if (!Number.isInteger(amount) || amount < 0) {
+    throw new Error(`${fieldName} must be a whole number 0 or more.`);
+  }
+
+  return amount;
+}
+
+function normalizeWeightUnit(value: string | undefined) {
+  return ["gm", "kg", "ml", "l"].includes(value || "") ? value : "gm";
 }
 
 function formatCustomer(firstName?: string | null, lastName?: string | null) {
@@ -189,7 +235,8 @@ export async function getBusinessDashboardData(businessId: number) {
   const kpis: DashboardKpis = {
     totalOrders: orders.length,
     totalRevenue: orders.reduce(
-      (total, order) => total + toNumber(order.ORDER_FINAL_AMOUNT),
+      (total, order) =>
+        total + (countsAsRevenue(order) ? toNumber(order.ORDER_FINAL_AMOUNT) : 0),
       0
     ),
     pendingOrders: orders.filter(
@@ -267,7 +314,15 @@ export async function getProductsAdminData(businessId: number) {
       categoryId: matchedCategory?.BUSINESS_PRODUCT_CATEGORY_ID || null,
       categoryName: matchedCategory?.TITLE || "Uncategorized",
       price: toNumber(product.PRODUCT_PRICE),
+      costPrice: toNumber(product.COST_PRICE),
+      compareAtPrice: toNumber(product.COMPARE_AS_PRICE),
+      trackInventory: product.TRACK_INVENTORY === 1,
+      inventoryOnHand: product.INVENTORY_ON_HAND ?? 0,
+      inventoryAvailable: product.INVENTORY_AVAILABLE ?? 0,
+      inventoryCommitted: product.INVENTORY_COMMITED ?? 0,
       stock: product.INVENTORY_AVAILABLE ?? product.INVENTORY_ON_HAND ?? 0,
+      weight: product.WEIGHT ?? 0,
+      weightUnit: product.WEIGHT_UNIT || "gm",
       status: product.STATUS === 1 ? "active" : "inactive",
       imageUrl: product.PIC,
       tagIds,
@@ -286,6 +341,23 @@ export async function saveProduct(values: ProductFormValues) {
   if (!values.title.trim() || !values.product_price.trim()) {
     throw new Error("Product name and price are required.");
   }
+
+  const price = parseMoney(values.product_price, "Product price", true);
+  const costPrice = parseMoney(values.cost_price, "Cost price");
+  const compareAtPrice = parseMoney(values.compare_as_price, "Compare-at price");
+  if (Number(compareAtPrice) > 0 && Number(compareAtPrice) <= Number(price)) {
+    throw new Error("Compare-at price should be greater than product price.");
+  }
+
+  const trackInventory = values.track_inventory === true;
+  const committed = trackInventory
+    ? parseWholeNumber(values.inventory_commited, "Committed inventory")
+    : 0;
+  const onHand = trackInventory
+    ? parseWholeNumber(values.inventory_on_hand, "Stock quantity")
+    : 0;
+  const available = trackInventory ? Math.max(onHand - committed, 0) : 0;
+  const weight = parseWholeNumber(values.weight, "Weight");
 
   const explicitTagIds = Array.from(new Set(values.tag_ids));
   const categoryTagIds =
@@ -332,7 +404,15 @@ export async function saveProduct(values: ProductFormValues) {
     BUSINESS_ID: values.businessId,
     TITLE: values.title.trim(),
     DESCRIPTION: values.description.trim(),
-    PRODUCT_PRICE: values.product_price.trim(),
+    PRODUCT_PRICE: price,
+    COST_PRICE: costPrice,
+    COMPARE_AS_PRICE: compareAtPrice,
+    TRACK_INVENTORY: trackInventory ? 1 : 0,
+    INVENTORY_ON_HAND: onHand,
+    INVENTORY_AVAILABLE: available,
+    INVENTORY_COMMITED: committed,
+    WEIGHT: weight,
+    WEIGHT_UNIT: normalizeWeightUnit(values.weight_unit),
     PIC: values.pic.trim() || null,
   };
 

@@ -37,6 +37,7 @@ import type {
   MenuCardAvailability,
   MenuCardRecordStatus,
   MenuCardRow,
+  WeekdayKey,
 } from "@/services/menu-management";
 
 type MenuCardsManagementProps = {
@@ -50,7 +51,20 @@ type MenuCardFormValues = {
   validFrom: string;
   validTo: string;
   status: MenuCardRecordStatus;
+  isUnlimited: boolean;
+  repeatWeekly: boolean;
+  activeDays: WeekdayKey[];
 };
+const weekdayLabels: Record<WeekdayKey, string> = {
+  monday: "Mon",
+  tuesday: "Tue",
+  wednesday: "Wed",
+  thursday: "Thu",
+  friday: "Fri",
+  saturday: "Sat",
+  sunday: "Sun",
+};
+const weekdayKeys = Object.keys(weekdayLabels) as WeekdayKey[];
 
 const filterTabs: { value: FilterValue; label: string }[] = [
   { value: "all", label: "All" },
@@ -105,6 +119,9 @@ export default function MenuCardsManagement({
       validFrom: card.validFrom || todayInputValue(),
       validTo: card.validTo || addDaysInputValue(30),
       status: card.status,
+      isUnlimited: card.isUnlimited,
+      repeatWeekly: card.repeatWeekly,
+      activeDays: card.activeDays.length ? card.activeDays : [...weekdayKeys],
     });
     setError("");
     setFormOpen(true);
@@ -265,6 +282,22 @@ export default function MenuCardsManagement({
                     </h3>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <MenuCardStatusBadge card={card} />
+                      {card.isUnlimited && (
+                        <Badge
+                          variant="outline"
+                          className="border-emerald-200 bg-emerald-50 text-emerald-700"
+                        >
+                          Daily unlimited
+                        </Badge>
+                      )}
+                      {card.repeatWeekly && (
+                        <Badge
+                          variant="outline"
+                          className="border-indigo-200 bg-indigo-50 text-indigo-700"
+                        >
+                          Repeat weekly
+                        </Badge>
+                      )}
                     </div>
                   </div>
                   <MenuCardActions
@@ -285,6 +318,18 @@ export default function MenuCardsManagement({
                     {card.categoryCount} categories &middot; {card.productCount}{" "}
                     products
                   </p>
+                  {card.activeDays.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {card.activeDays.map((day) => (
+                        <span
+                          key={day}
+                          className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600"
+                        >
+                          {weekdayLabels[day]}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <Button asChild variant="outline" className="w-full">
@@ -366,10 +411,101 @@ export default function MenuCardsManagement({
                     }))
                   }
                   className="mt-2"
-                  required
+                  required={!formValues.isUnlimited}
+                  disabled={saving || formValues.isUnlimited}
+                />
+              </div>
+            </div>
+            <div className="space-y-3 rounded-lg border border-gray-200 p-3">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label htmlFor="daily-unlimited">Daily unlimited</Label>
+                  {formValues.isUnlimited && (
+                    <p className="text-sm text-gray-500">
+                      This menu will stay active every day until you turn it
+                      off.
+                    </p>
+                  )}
+                </div>
+                <Switch
+                  id="daily-unlimited"
+                  checked={formValues.isUnlimited}
+                  onCheckedChange={(checked) =>
+                    setFormValues((current) => ({
+                      ...current,
+                      isUnlimited: checked,
+                      repeatWeekly: checked ? true : current.repeatWeekly,
+                      activeDays: checked
+                        ? [...weekdayKeys]
+                        : current.activeDays,
+                      validTo: checked
+                        ? ""
+                        : current.validTo || addDaysInputValue(30),
+                    }))
+                  }
                   disabled={saving}
                 />
               </div>
+            </div>
+            <div className="space-y-3 rounded-lg border border-gray-200 p-3">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label htmlFor="repeat-weekly">Repeat weekly</Label>
+                  {formValues.repeatWeekly && (
+                    <p className="text-sm text-gray-500">
+                      This menu repeats on selected weekdays inside the selected
+                      date range.
+                    </p>
+                  )}
+                </div>
+                <Switch
+                  id="repeat-weekly"
+                  checked={formValues.repeatWeekly}
+                  onCheckedChange={(checked) =>
+                    setFormValues((current) => ({
+                      ...current,
+                      repeatWeekly: checked,
+                      activeDays:
+                        checked && !current.activeDays.length
+                          ? [...weekdayKeys]
+                          : current.activeDays,
+                    }))
+                  }
+                  disabled={saving || formValues.isUnlimited}
+                />
+              </div>
+              {(formValues.repeatWeekly || formValues.isUnlimited) && (
+                <div className="flex flex-wrap gap-2">
+                  {weekdayKeys.map((day) => {
+                    const selected = formValues.activeDays.includes(day);
+
+                    return (
+                      <Button
+                        key={day}
+                        type="button"
+                        variant={selected ? "default" : "outline"}
+                        size="sm"
+                        disabled={saving || formValues.isUnlimited}
+                        onClick={() =>
+                          setFormValues((current) => ({
+                            ...current,
+                            activeDays: selected
+                              ? current.activeDays.filter(
+                                  (item) => item !== day
+                                )
+                              : [...current.activeDays, day],
+                          }))
+                        }
+                        className={
+                          selected ? "bg-foodeez-primary text-white" : ""
+                        }
+                      >
+                        {weekdayLabels[day]}
+                      </Button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
               <div>
@@ -540,6 +676,9 @@ function getDefaultFormValues(): MenuCardFormValues {
     validFrom: todayInputValue(),
     validTo: addDaysInputValue(30),
     status: "active",
+    isUnlimited: false,
+    repeatWeekly: false,
+    activeDays: [...weekdayKeys],
   };
 }
 
