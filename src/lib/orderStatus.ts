@@ -35,6 +35,7 @@ type OrderLike = {
   ORDER_TYPE?: string | null;
   PAYMENT_DONE?: number | null;
   PAYMENT_MODE?: string | null;
+  STRIPE_REFUND_STATUS?: string | null;
 };
 
 export const STATUS_CODE_BY_NAME: Record<OrderStatusName, number> = {
@@ -152,14 +153,35 @@ export function getAllowedOrderActions(order: OrderLike): OrderAction[] {
     : [];
 }
 
-export function getPaymentStatusLabel(value?: number | null) {
+export function getPaymentStatusLabel(
+  value?: number | null,
+  orderType?: string | null
+) {
   if (value === PAYMENT_DONE.PAID) return "Paid";
   if (value === PAYMENT_DONE.REFUNDED) return "Refunded";
   if (value === PAYMENT_DONE.FAILED) return "Failed";
+  if (normalizeOrderType(orderType) === "pickup") return "Cash on pickup";
+  if (normalizeOrderType(orderType) === "delivery") return "Cash on delivery";
   return "Pending / unpaid";
+}
+
+export function getPaymentStatusBadgeColor(value?: number | null) {
+  if (value === PAYMENT_DONE.PAID) return "border-green-200 bg-green-50 text-green-700";
+  if (value === PAYMENT_DONE.REFUNDED) return "border-purple-200 bg-purple-50 text-purple-700";
+  if (value === PAYMENT_DONE.FAILED) return "border-red-200 bg-red-50 text-red-700";
+  return "border-yellow-200 bg-yellow-50 text-yellow-800";
 }
 
 export function isStripePaidOrder(order: OrderLike) {
   const mode = String(order.PAYMENT_MODE || "").toLowerCase();
   return order.PAYMENT_DONE === PAYMENT_DONE.PAID && /stripe|card/.test(mode);
+}
+
+export function countsAsRevenue(order: OrderLike) {
+  return (
+    normalizeOrderStatus(order.ORDER_STATUS) !== "rejected" &&
+    order.PAYMENT_DONE !== PAYMENT_DONE.REFUNDED &&
+    order.PAYMENT_DONE !== PAYMENT_DONE.FAILED &&
+    !order.STRIPE_REFUND_STATUS
+  );
 }

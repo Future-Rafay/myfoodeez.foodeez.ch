@@ -622,7 +622,7 @@ export default function AdminSettingsForm({
                 Defaults
               </h3>
               <p className="mt-1 text-sm text-gray-500">
-                These defaults are used to pre-fill the ETA popup on new orders.
+                These defaults are used when an order does not have a saved ETA.
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { createBusinessNotification } from "@/lib/businessNotifications";
 import { calculateDeliveryQuote } from "@/lib/fulfillment";
+import { reserveOrderInventory } from "@/lib/inventory";
 
 type RouteContext = {
   params: Promise<{ businessId: string }>;
@@ -159,68 +160,79 @@ export async function POST(req: Request, { params }: RouteContext) {
   const now = new Date();
   const ids = await nextIds();
 
-  const created = await prisma.$transaction(async (tx) => {
-    const order = await tx.business_order.create({
-      data: {
-        BUSINESS_ORDER_ID: ids.orderId,
-        CREATION_DATETIME: now,
-        BUSINESS_ID: businessId,
-        VISITOR_ID: Number.isFinite(visitorId) ? visitorId : 0,
-        PAYMENT_DONE: paymentDoneFor(paymentMode),
-        PAYMENT_MODE: paymentMode,
-        DELIVERY_ET: null,
-        ORDER_STATUS: 1,
-        DELIVERY_DATETIME: null,
-        TERMINAL: readText(body, "terminal") || null,
-        STAFF_MEMBER: readText(body, "staffMember") || null,
-        FIRST_NAME: readCustomerText(body, customer, "firstName") || null,
-        LAST_NAME: readCustomerText(body, customer, "lastName") || null,
-        ADDRESS_STREET:
-          readCustomerText(body, customer, "addressStreet") || null,
-        ADDRESS_ZIP: addressZip || null,
-        ADDRESS_TOWN: readCustomerText(body, customer, "addressTown") || null,
-        ADDRESS_COUNTRY_CODE:
-          readCustomerText(body, customer, "addressCountryCode") || "CH",
-        PHONE_NUMBER: readCustomerText(body, customer, "phoneNumber") || null,
-        EMAIL_ADDRESS: readCustomerText(body, customer, "emailAddress") || null,
-        ORDER_GROSS_AMOUNT: subtotal,
-        ORDER_TAX_AMOUNT: 0,
-        ORDER_NET_AMOUNT: subtotal,
-        ORDER_DISCOUNT_AMOUNT: 0,
-        ORDER_AMOUNT: subtotal,
-        SHIPPING_CHARGES: shippingCharges,
-        ORDER_REFUND_AMOUNT: 0,
-        ORDER_FINAL_AMOUNT: finalAmount,
-        ORDER_TYPE: orderType,
-        ETA_ACKNOWLEDGED_DATETIME: null,
-      },
-    });
+  let created;
+  try {
+    created = await prisma.$transaction(async (tx) => {
+      await reserveOrderInventory(tx, businessId, normalizedItems);
 
-    await tx.business_order_detail.createMany({
-      data: normalizedItems.map((item, index) => {
-        const product = products.find(
-          (row) => row.BUSINESS_PRODUCT_ID === item.productId
-        );
-        const price = Number(product?.PRODUCT_PRICE || 0);
-
-        return {
-          BUSINESS_ORDER_DETAIL_ID: ids.detailId + index,
+      const order = await tx.business_order.create({
+        data: {
+          BUSINESS_ORDER_ID: ids.orderId,
           CREATION_DATETIME: now,
-          BUSINESS_ORDER_ID: order.BUSINESS_ORDER_ID,
-          BUSINESS_PRODUCT_ID: item.productId,
-          ORDER_QUANTITY: item.quantity,
-          QUANTITY_DELIVERED: 0,
-          PRODUCT_SELL_PRICE: price,
-          PRODUCT_DISCOUNT: 0,
-          PRODUCT_PRICE: price,
-          QUANTITY_BALANCE: item.quantity,
-          QUANTITY__REFUND: 0,
-        };
-      }),
-    });
+          BUSINESS_ID: businessId,
+          VISITOR_ID: Number.isFinite(visitorId) ? visitorId : 0,
+          PAYMENT_DONE: paymentDoneFor(paymentMode),
+          PAYMENT_MODE: paymentMode,
+          DELIVERY_ET: null,
+          ORDER_STATUS: 1,
+          DELIVERY_DATETIME: null,
+          TERMINAL: readText(body, "terminal") || null,
+          STAFF_MEMBER: readText(body, "staffMember") || null,
+          FIRST_NAME: readCustomerText(body, customer, "firstName") || null,
+          LAST_NAME: readCustomerText(body, customer, "lastName") || null,
+          ADDRESS_STREET:
+            readCustomerText(body, customer, "addressStreet") || null,
+          ADDRESS_ZIP: addressZip || null,
+          ADDRESS_TOWN: readCustomerText(body, customer, "addressTown") || null,
+          ADDRESS_COUNTRY_CODE:
+            readCustomerText(body, customer, "addressCountryCode") || "CH",
+          PHONE_NUMBER: readCustomerText(body, customer, "phoneNumber") || null,
+          EMAIL_ADDRESS: readCustomerText(body, customer, "emailAddress") || null,
+          ORDER_GROSS_AMOUNT: subtotal,
+          ORDER_TAX_AMOUNT: 0,
+          ORDER_NET_AMOUNT: subtotal,
+          ORDER_DISCOUNT_AMOUNT: 0,
+          ORDER_AMOUNT: subtotal,
+          SHIPPING_CHARGES: shippingCharges,
+          ORDER_REFUND_AMOUNT: 0,
+          ORDER_FINAL_AMOUNT: finalAmount,
+          ORDER_TYPE: orderType,
+          ETA_ACKNOWLEDGED_DATETIME: null,
+        },
+      });
 
-    return order;
-  });
+      await tx.business_order_detail.createMany({
+        data: normalizedItems.map((item, index) => {
+          const product = products.find(
+            (row) => row.BUSINESS_PRODUCT_ID === item.productId
+          );
+          const price = Number(product?.PRODUCT_PRICE || 0);
+
+          return {
+            BUSINESS_ORDER_DETAIL_ID: ids.detailId + index,
+            CREATION_DATETIME: now,
+            BUSINESS_ORDER_ID: order.BUSINESS_ORDER_ID,
+            BUSINESS_PRODUCT_ID: item.productId,
+            ORDER_QUANTITY: item.quantity,
+            QUANTITY_DELIVERED: 0,
+            PRODUCT_SELL_PRICE: price,
+            PRODUCT_DISCOUNT: 0,
+            PRODUCT_PRICE: price,
+            QUANTITY_BALANCE: item.quantity,
+            QUANTITY__REFUND: 0,
+          };
+        }),
+      });
+
+      return order;
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    throw error;
+  }
 
   await createBusinessNotification({
     businessId,

@@ -48,12 +48,9 @@ function errorResponse(error: unknown) {
       );
     }
 
-    if (error.message === "Stripe refund required before rejection") {
+    if (error.message.startsWith("Refund failed, so the order was not rejected.")) {
       return NextResponse.json(
-        {
-          error:
-            "Stripe refund is not implemented in admin yet because STRIPE_PAYMENT_INTENT_ID is not stored.",
-        },
+        { error: error.message },
         { status: 409 }
       );
     }

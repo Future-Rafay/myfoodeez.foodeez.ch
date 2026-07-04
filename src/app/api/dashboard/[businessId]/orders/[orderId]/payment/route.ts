@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { updateOrderEta } from "@/services/orders-management";
+import { updateOrderPayment } from "@/services/orders-management";
 
-type OrderEtaRouteContext = {
+type OrderPaymentRouteContext = {
   params: Promise<{ businessId: string; orderId: string }>;
 };
 
@@ -21,26 +21,31 @@ function errorResponse(error: unknown) {
 
     if (
       error.message === "Invalid route params" ||
-      error.message === "ETA is required" ||
-      error.message === "ETA cannot be changed after refund or order closure"
+      error.message === "Invalid payment status"
     ) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
   }
 
-  console.error("Order ETA API error:", error);
-  return NextResponse.json({ error: "Failed to update ETA" }, { status: 500 });
+  console.error("Order payment API error:", error);
+  return NextResponse.json(
+    { error: "Failed to update payment status" },
+    { status: 500 }
+  );
 }
 
-export async function PATCH(req: Request, { params }: OrderEtaRouteContext) {
+export async function PATCH(
+  req: Request,
+  { params }: OrderPaymentRouteContext
+) {
   const { businessId: businessIdParam, orderId: orderIdParam } = await params;
   const body = await req.json().catch(() => null);
 
   try {
-    const order = await updateOrderEta(
+    const order = await updateOrderPayment(
       Number(businessIdParam),
       Number(orderIdParam),
-      String(body?.eta ?? "")
+      Number(body?.paymentDone)
     );
     return NextResponse.json(order);
   } catch (error) {

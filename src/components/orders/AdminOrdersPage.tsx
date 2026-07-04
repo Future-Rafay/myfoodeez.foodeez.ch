@@ -55,9 +55,11 @@ import {
   getAllowedOrderActions,
   getOrderStatusBadgeColor,
   getOrderStatusLabel,
+  getPaymentStatusBadgeColor,
   getPaymentStatusLabel,
   isStripePaidOrder,
   normalizeOrderType,
+  PAYMENT_DONE,
 } from "@/lib/orderStatus";
 import { cn } from "@/lib/utils";
 import type {
@@ -78,6 +80,7 @@ type OrdersResponse = {
 
 type StatusFilter = "all" | NormalizedOrderStatus;
 type DateRangeFilter = "all" | "today" | "last7" | "custom";
+type ToastState = { type: "success" | "error"; message: string } | null;
 
 const PAGE_SIZE = 20;
 
@@ -103,6 +106,12 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   hour: "numeric",
   minute: "2-digit",
+});
+
+const timeFormatter = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
 });
 
 const statusOptions: { label: string; value: StatusFilter }[] = [
@@ -163,6 +172,26 @@ function formatDateTime(value: string | null) {
   return dateTimeFormatter.format(new Date(value));
 }
 
+function getEtaDate(order: AdminOrderRow, prepDefaults: OrderPrepDefaults) {
+  const date = new Date(order.DELIVERY_ET || order.CREATION_DATETIME || "");
+  if (Number.isNaN(date.getTime())) return null;
+
+  if (!order.DELIVERY_ET) {
+    date.setMinutes(
+      date.getMinutes() +
+      (order.ORDER_TYPE === "pickup"
+        ? prepDefaults.defaultPickupPrepMinutes
+        : prepDefaults.defaultDeliveryPrepMinutes)
+    );
+  }
+
+  return date;
+}
+
+function formatTimeOnly(date: Date | null) {
+  return date ? timeFormatter.format(date) : "Not available";
+}
+
 function formatDatetimeLocal(date: Date) {
   const offsetMs = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
@@ -201,13 +230,13 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isSavingEta, setIsSavingEta] = useState(false);
+  const [isMarkingPaid, setIsMarkingPaid] = useState(false);
   const [error, setError] = useState("");
+  const [toast, setToast] = useState<ToastState>(null);
   const [selectedOrder, setSelectedOrder] = useState<AdminOrderRow | null>(null);
   const [rejectOrder, setRejectOrder] = useState<AdminOrderRow | null>(null);
   const [rejectionReason, setRejectionReason] = useState(REJECTION_REASONS[0]);
   const [rejectionNote, setRejectionNote] = useState("");
-  const [etaValue, setEtaValue] = useState("");
-  const [soundBlocked, setSoundBlocked] = useState(false);
 
   useEffect(() => {
     const orderId = new URLSearchParams(window.location.search).get("orderId");
@@ -281,55 +310,20 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
     setPage(1);
   }, [dateFrom, dateRange, dateTo, search, status]);
 
-  const etaOrder = orders.find(
-    (order) =>
-      order.ORDER_STATUS === 1 &&
-      !order.ETA_ACKNOWLEDGED_DATETIME &&
-      order.status === "preparing"
-  );
-
-  useEffect(() => {
-    if (!etaOrder) return;
-    const minutes =
-      etaOrder.ORDER_TYPE === "pickup"
-        ? prepDefaults.defaultPickupPrepMinutes
-        : prepDefaults.defaultDeliveryPrepMinutes;
-    const date = new Date();
-    date.setMinutes(date.getMinutes() + minutes);
-    setEtaValue(formatDatetimeLocal(date));
-  }, [etaOrder, prepDefaults]);
-
-  const playBeep = useCallback(async () => {
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as Window & { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!AudioContextClass) return;
-
-    const context = new AudioContextClass();
-    await context.resume();
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    oscillator.frequency.value = 880;
-    gain.gain.value = 0.08;
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.2);
-    window.setTimeout(() => void context.close(), 300);
-    setSoundBlocked(false);
-  }, []);
-
-  useEffect(() => {
-    if (!etaOrder) return;
-
-    void playBeep().catch(() => setSoundBlocked(true));
-    const interval = window.setInterval(() => {
-      void playBeep().catch(() => setSoundBlocked(true));
-    }, 10_000);
-
-    return () => window.clearInterval(interval);
-  }, [etaOrder, playBeep]);
+  function replaceOrder(updatedOrder: AdminOrderRow) {
+    setOrders((current) =>
+      current.map((order) =>
+        order.BUSINESS_ORDER_ID === updatedOrder.BUSINESS_ORDER_ID
+          ? updatedOrder
+          : order
+      )
+    );
+    setSelectedOrder((current) =>
+      current?.BUSINESS_ORDER_ID === updatedOrder.BUSINESS_ORDER_ID
+        ? updatedOrder
+        : current
+    );
+  }
 
   async function updateStatus(
     order: AdminOrderRow,
@@ -355,34 +349,30 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
       }
 
       const updatedOrder = (await response.json()) as AdminOrderRow;
-      setSelectedOrder((current) =>
-        current?.BUSINESS_ORDER_ID === updatedOrder.BUSINESS_ORDER_ID
-          ? updatedOrder
-          : current
-      );
+      replaceOrder(updatedOrder);
       await loadOrders();
+      return true;
     } catch (error) {
       setError(
         error instanceof Error ? error.message : "Failed to update order status"
       );
+      return false;
     } finally {
       setIsUpdating(false);
     }
   }
 
-  async function saveEta() {
-    if (!etaOrder) return;
-
+  async function saveEta(order: AdminOrderRow, eta: string) {
     setIsSavingEta(true);
     setError("");
 
     try {
       const response = await fetch(
-        `/api/dashboard/${businessId}/orders/${etaOrder.BUSINESS_ORDER_ID}/eta`,
+        `/api/dashboard/${businessId}/orders/${order.BUSINESS_ORDER_ID}/eta`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ eta: etaValue }),
+          body: JSON.stringify({ eta }),
         }
       );
 
@@ -391,7 +381,9 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
         throw new Error(data?.error || "Failed to update ETA");
       }
 
-      await loadOrders();
+      const updatedOrder = (await response.json()) as AdminOrderRow;
+      replaceOrder(updatedOrder);
+      setToast({ type: "success", message: "ETA updated." });
     } catch (error) {
       setError(error instanceof Error ? error.message : "Failed to update ETA");
     } finally {
@@ -399,32 +391,52 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
     }
   }
 
+  async function markPaid(order: AdminOrderRow) {
+    setIsMarkingPaid(true);
+    setError("");
+
+    try {
+      const response = await fetch(
+        `/api/dashboard/${businessId}/orders/${order.BUSINESS_ORDER_ID}/payment`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paymentDone: 1 }),
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Failed to update payment status");
+      }
+
+      const updatedOrder = (await response.json()) as AdminOrderRow;
+      replaceOrder(updatedOrder);
+      setToast({ type: "success", message: "Payment marked paid." });
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update payment status"
+      );
+    } finally {
+      setIsMarkingPaid(false);
+    }
+  }
+
   async function confirmReject() {
     if (!rejectOrder) return;
 
-    if (isStripePaidOrder(rejectOrder)) {
-      setIsUpdating(true);
-      setError("");
-
-      try {
-        const response = await fetch(
-          `/api/dashboard/${businessId}/orders/${rejectOrder.BUSINESS_ORDER_ID}/refund`,
-          { method: "POST" }
-        );
-        const data = await response.json().catch(() => null);
-        throw new Error(data?.error || "Refund failed");
-      } catch (error) {
-        setError(error instanceof Error ? error.message : "Refund failed");
-      } finally {
-        setIsUpdating(false);
-      }
-
-      return;
-    }
-
-    await updateStatus(rejectOrder, "rejected", {
+    const wasStripePaid = isStripePaidOrder(rejectOrder);
+    const updated = await updateStatus(rejectOrder, "rejected", {
       rejectionReason,
       rejectionNote,
+    });
+    if (!updated) return;
+
+    setToast({
+      type: "success",
+      message: wasStripePaid ? "Order refunded and rejected." : "Order rejected.",
     });
     setRejectOrder(null);
     setRejectionReason(REJECTION_REASONS[0]);
@@ -570,6 +582,18 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
               {error}
             </p>
           )}
+          {toast && (
+            <p
+              className={cn(
+                "mt-3 rounded-lg border px-3 py-2 text-sm",
+                toast.type === "success"
+                  ? "border-green-200 bg-green-50 text-green-700"
+                  : "border-red-200 bg-red-50 text-red-700"
+              )}
+            >
+              {toast.message}
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -585,10 +609,12 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                     <TableRow className="bg-gray-50 hover:bg-gray-50">
                       <TableHead>Order #</TableHead>
                       <TableHead>Customer</TableHead>
-                      <TableHead>Items summary</TableHead>
+                      <TableHead>Order type</TableHead>
+                      <TableHead>Items</TableHead>
                       <TableHead>Total</TableHead>
-                      <TableHead>Payment</TableHead>
+                      <TableHead>Payment status</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>ETA</TableHead>
                       <TableHead>Ordered at</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -610,13 +636,21 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                             {order.VISITOR_PHONE || "No phone"}
                           </div>
                         </TableCell>
+                        <TableCell className="capitalize">
+                          {order.ORDER_TYPE}
+                        </TableCell>
                         <TableCell>{itemsSummary(order)}</TableCell>
                         <TableCell>
                           {currencyFormatter.format(order.FINAL_AMOUNT)}
                         </TableCell>
-                        <TableCell>{order.PAYMENT_MODE || "Not set"}</TableCell>
+                        <TableCell>
+                          <PaymentStatusBadge order={order} />
+                        </TableCell>
                         <TableCell>
                           <StatusBadge order={order} />
+                        </TableCell>
+                        <TableCell>
+                          <EtaTime order={order} prepDefaults={prepDefaults} />
                         </TableCell>
                         <TableCell className="text-gray-500">
                           {formatDateTime(order.CREATION_DATETIME)}
@@ -630,13 +664,23 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-56">
+
+                              <DropdownMenuItem
+                                onClick={() => setSelectedOrder(order)}
+                              >
+                                <Eye className="size-4" />
+                                View Details
+                              </DropdownMenuItem>
+                              {getAllowedOrderActions(order).length > 0 && (
+                                <div className="my-1 h-px bg-gray-100" />
+                              )}
                               {getAllowedOrderActions(order).map((action) => (
                                 <DropdownMenuItem
                                   key={action.status}
                                   disabled={isUpdating}
                                   className={cn(
                                     action.variant === "destructive" &&
-                                      "text-red-600 focus:text-red-700"
+                                    "text-red-600 focus:text-red-700"
                                   )}
                                   onClick={() => {
                                     if (action.status === "rejected") {
@@ -650,15 +694,7 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                                   {action.label}
                                 </DropdownMenuItem>
                               ))}
-                              {getAllowedOrderActions(order).length > 0 && (
-                                <div className="my-1 h-px bg-gray-100" />
-                              )}
-                              <DropdownMenuItem
-                                onClick={() => setSelectedOrder(order)}
-                              >
-                                <Eye className="size-4" />
-                                View Details
-                              </DropdownMenuItem>
+
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
@@ -712,19 +748,15 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
 
       <OrderDetailsModal
         order={selectedOrder}
+        prepDefaults={prepDefaults}
         isUpdating={isUpdating}
+        isSavingEta={isSavingEta}
+        isMarkingPaid={isMarkingPaid}
         onClose={() => setSelectedOrder(null)}
         onUpdateStatus={updateStatus}
+        onSaveEta={(order, eta) => saveEta(order, eta)}
+        onMarkPaid={(order) => markPaid(order)}
         onReject={(order) => setRejectOrder(order)}
-      />
-      <EtaModal
-        order={etaOrder || null}
-        etaValue={etaValue}
-        isSaving={isSavingEta}
-        soundBlocked={soundBlocked}
-        onEtaChange={setEtaValue}
-        onSave={() => void saveEta()}
-        onEnableSound={() => void playBeep()}
       />
       <RejectOrderModal
         order={rejectOrder}
@@ -748,18 +780,53 @@ function StatusBadge({ order }: { order: AdminOrderRow }) {
   );
 }
 
+function PaymentStatusBadge({ order }: { order: AdminOrderRow }) {
+  if (order.STRIPE_REFUND_STATUS && order.PAYMENT_DONE !== 2) {
+    return (
+      <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+        Refund pending
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge variant="outline" className={getPaymentStatusBadgeColor(order.PAYMENT_DONE)}>
+      {getPaymentStatusLabel(order.PAYMENT_DONE, order.ORDER_TYPE)}
+    </Badge>
+  );
+}
+
+function EtaTime({
+  order,
+  prepDefaults,
+}: {
+  order: AdminOrderRow;
+  prepDefaults: OrderPrepDefaults;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span>{formatTimeOnly(getEtaDate(order, prepDefaults))}</span>
+      {!order.DELIVERY_ET && (
+        <Badge variant="outline" className="border-gray-200 bg-gray-50 text-gray-600">
+          Default
+        </Badge>
+      )}
+    </div>
+  );
+}
+
 function OrdersSkeleton() {
   return (
     <div>
-      <div className="grid grid-cols-8 gap-4 border-b border-gray-100 bg-gray-50 p-4">
-        {Array.from({ length: 8 }).map((_, index) => (
+      <div className="grid grid-cols-10 gap-4 border-b border-gray-100 bg-gray-50 p-4">
+        {Array.from({ length: 10 }).map((_, index) => (
           <Skeleton key={index} className="h-4 w-full" />
         ))}
       </div>
       <div className="divide-y divide-gray-100">
         {Array.from({ length: 8 }).map((_, rowIndex) => (
-          <div key={rowIndex} className="grid grid-cols-8 gap-4 p-4">
-            {Array.from({ length: 8 }).map((_, cellIndex) => (
+          <div key={rowIndex} className="grid grid-cols-10 gap-4 p-4">
+            {Array.from({ length: 10 }).map((_, cellIndex) => (
               <Skeleton key={cellIndex} className="h-5 w-full" />
             ))}
           </div>
@@ -817,68 +884,6 @@ function MoneyLine({
   );
 }
 
-function EtaModal({
-  order,
-  etaValue,
-  isSaving,
-  soundBlocked,
-  onEtaChange,
-  onSave,
-  onEnableSound,
-}: {
-  order: AdminOrderRow | null;
-  etaValue: string;
-  isSaving: boolean;
-  soundBlocked: boolean;
-  onEtaChange: (value: string) => void;
-  onSave: () => void;
-  onEnableSound: () => void;
-}) {
-  if (!order) return null;
-
-  return (
-    <Dialog open>
-      <DialogContent showCloseButton={false} className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>
-            {order.ORDER_TYPE === "pickup"
-              ? "Set estimated pickup time"
-              : "Set estimated delivery time"}
-          </DialogTitle>
-          <DialogDescription>
-            Set an ETA before continuing with this order.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-2">
-          <Label htmlFor="eta">{etaLabel(order)}</Label>
-          <Input
-            id="eta"
-            type="datetime-local"
-            value={etaValue}
-            onChange={(event) => onEtaChange(event.target.value)}
-          />
-          {soundBlocked && (
-            <Button type="button" variant="outline" onClick={onEnableSound}>
-              Enable sound alerts
-            </Button>
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button
-            onClick={onSave}
-            disabled={isSaving || !etaValue}
-            className="bg-foodeez-primary text-white hover:bg-foodeez-secondary"
-          >
-            {isSaving ? "Saving..." : "Save ETA"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function RejectOrderModal({
   order,
   isUpdating,
@@ -906,14 +911,13 @@ function RejectOrderModal({
         <DialogHeader>
           <DialogTitle>Reject order #{order.BUSINESS_ORDER_ID}</DialogTitle>
           <DialogDescription>
-            Choose a reason. Stripe/card paid orders must be refunded first.
+            Choose a reason. This action cannot be undone.
           </DialogDescription>
         </DialogHeader>
 
         {isStripePaidOrder(order) && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            This order is card paid. Admin refunds are not implemented yet, so
-            rejection will stop at the refund placeholder.
+            This order was paid online. Rejecting it will refund the customer first.
           </p>
         )}
 
@@ -947,7 +951,13 @@ function RejectOrderModal({
             onClick={onConfirm}
             disabled={isUpdating || !reason}
           >
-            {isUpdating ? "Rejecting..." : "Reject order"}
+            {isUpdating
+              ? isStripePaidOrder(order)
+                ? "Processing refund..."
+                : "Rejecting..."
+              : isStripePaidOrder(order)
+                ? "Refund and reject order"
+                : "Reject order"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -957,25 +967,47 @@ function RejectOrderModal({
 
 function OrderDetailsModal({
   order,
+  prepDefaults,
   isUpdating,
+  isSavingEta,
+  isMarkingPaid,
   onClose,
   onUpdateStatus,
+  onSaveEta,
+  onMarkPaid,
   onReject,
 }: {
   order: AdminOrderRow | null;
+  prepDefaults: OrderPrepDefaults;
   isUpdating: boolean;
+  isSavingEta: boolean;
+  isMarkingPaid: boolean;
   onClose: () => void;
   onUpdateStatus: (
     order: AdminOrderRow,
     status: NormalizedOrderStatus
-  ) => Promise<void>;
+  ) => Promise<unknown>;
+  onSaveEta: (order: AdminOrderRow, eta: string) => Promise<void>;
+  onMarkPaid: (order: AdminOrderRow) => Promise<void>;
   onReject: (order: AdminOrderRow) => void;
 }) {
+  const [etaInput, setEtaInput] = useState("");
+
+  useEffect(() => {
+    if (!order) return;
+    const etaDate = getEtaDate(order, prepDefaults);
+    setEtaInput(etaDate ? formatDatetimeLocal(etaDate) : "");
+  }, [order, prepDefaults]);
+
   if (!order) return null;
 
   const actions = getAllowedOrderActions(order);
   const isRejected = order.status === "rejected";
-  const isCompleted = order.status === "delivered" || order.status === "picked_up";
+  const showMarkPaid = order.PAYMENT_DONE === 0;
+  const canEditEta =
+    order.PAYMENT_DONE !== PAYMENT_DONE.REFUNDED &&
+    !order.STRIPE_REFUND_STATUS &&
+    !["rejected", "delivered", "picked_up"].includes(order.status);
 
   return (
     <Dialog open={Boolean(order)} onOpenChange={(open) => !open && onClose()}>
@@ -983,7 +1015,7 @@ function OrderDetailsModal({
         <DialogHeader>
           <DialogTitle>Order #{order.BUSINESS_ORDER_ID}</DialogTitle>
           <DialogDescription>
-            Full order, customer, payment, and item details from the database.
+            Full order, customer, payment, and item details.
           </DialogDescription>
         </DialogHeader>
 
@@ -1006,15 +1038,23 @@ function OrderDetailsModal({
               />
               <DetailLine
                 label={etaLabel(order)}
-                value={formatDateTime(order.DELIVERY_ET)}
-              />
-              <DetailLine
-                label="Payment"
-                value={order.PAYMENT_MODE || "Not set"}
+                value={
+                  <span className="inline-flex items-center justify-end gap-2">
+                    {formatTimeOnly(getEtaDate(order, prepDefaults))}
+                    {!order.DELIVERY_ET && (
+                      <Badge
+                        variant="outline"
+                        className="border-gray-200 bg-gray-50 text-gray-600"
+                      >
+                        Default
+                      </Badge>
+                    )}
+                  </span>
+                }
               />
               <DetailLine
                 label="Payment status"
-                value={getPaymentStatusLabel(order.PAYMENT_DONE)}
+                value={<PaymentStatusBadge order={order} />}
               />
               {isRejected && order.ORDER_REJECTION_REASON && (
                 <DetailLine
@@ -1033,36 +1073,6 @@ function OrderDetailsModal({
               )}
               {order.TERMINAL && (
                 <DetailLine label="Terminal" value={order.TERMINAL} />
-              )}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {actions.map((action) => (
-                <Button
-                  key={action.status}
-                  disabled={isUpdating}
-                  variant={action.variant === "destructive" ? "destructive" : "default"}
-                  onClick={() =>
-                    action.status === "rejected"
-                      ? onReject(order)
-                      : onUpdateStatus(order, action.status)
-                  }
-                  className={cn(
-                    action.variant !== "destructive" &&
-                      "bg-foodeez-primary text-white hover:bg-foodeez-secondary"
-                  )}
-                >
-                  {action.label}
-                </Button>
-              ))}
-              {isCompleted && (
-                <Badge variant="outline" className="bg-gray-50 text-gray-600">
-                  Completed
-                </Badge>
-              )}
-              {isRejected && (
-                <Badge variant="outline" className="bg-gray-50 text-gray-600">
-                  Rejected
-                </Badge>
               )}
             </div>
           </div>
@@ -1088,19 +1098,66 @@ function OrderDetailsModal({
 
           <div className="rounded-lg border border-gray-200 p-4">
             <h3 className="text-sm font-semibold text-gray-950">
-              Financial summary
+              Payment details
             </h3>
             <div className="mt-3 space-y-2">
-              <MoneyLine label="Gross" value={order.GROSS_AMOUNT} />
+              <DetailLine
+                label="Payment mode"
+                value={order.PAYMENT_MODE || "Not set"}
+              />
+              <DetailLine
+                label="Payment status"
+                value={<PaymentStatusBadge order={order} />}
+              />
+              {order.STRIPE_PAYMENT_INTENT_ID && (
+                <DetailLine
+                  label="Stripe payment intent"
+                  value={
+                    <code className="max-w-48 truncate rounded bg-gray-50 px-1.5 py-0.5 text-xs text-gray-600">
+                      {order.STRIPE_PAYMENT_INTENT_ID}
+                    </code>
+                  }
+                />
+              )}
+              {order.STRIPE_REFUND_STATUS && (
+                <DetailLine
+                  label="Refund status"
+                  value={order.STRIPE_REFUND_STATUS}
+                />
+              )}
+              {order.STRIPE_REFUNDED_DATETIME && (
+                <DetailLine
+                  label="Refunded at"
+                  value={formatDateTime(order.STRIPE_REFUNDED_DATETIME)}
+                />
+              )}
+              <MoneyLine label="Gross amount" value={order.GROSS_AMOUNT} />
               <MoneyLine
                 label="Discount"
                 value={order.DISCOUNT_AMOUNT}
                 danger
               />
-              <MoneyLine label="Shipping" value={order.SHIPPING_AMOUNT} />
+              <MoneyLine
+                label="Shipping charges"
+                value={order.SHIPPING_AMOUNT}
+              />
               <MoneyLine label="Tax" value={order.TAX_AMOUNT} />
-              <MoneyLine label="Refund" value={order.REFUND_AMOUNT} danger />
-              <MoneyLine label="TOTAL" value={order.FINAL_AMOUNT} total />
+              <MoneyLine
+                label="Refund amount"
+                value={order.REFUND_AMOUNT}
+                danger
+              />
+              <MoneyLine label="Final amount" value={order.FINAL_AMOUNT} total />
+              {showMarkPaid && (
+                <Button
+                  type="button"
+                  className="mt-2 bg-foodeez-primary text-white hover:bg-foodeez-secondary"
+                  disabled={isMarkingPaid}
+                  onClick={() => void onMarkPaid(order)}
+                >
+                  {isMarkingPaid ? "Marking..." : "Mark paid"}
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -1147,11 +1204,58 @@ function OrderDetailsModal({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Close
-          </Button>
+          <div className="w-full flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {actions.map((action) => (
+                <Button
+                  key={action.status}
+                  disabled={isUpdating}
+                  variant={action.variant === "destructive" ? "destructive" : "default"}
+                  onClick={() =>
+                    action.status === "rejected"
+                      ? onReject(order)
+                      : onUpdateStatus(order, action.status)
+                  }
+                  className={cn(
+                    action.variant !== "destructive" &&
+                    "bg-foodeez-primary text-white hover:bg-foodeez-secondary"
+                  )}
+                >
+                  {action.label}
+                </Button>
+              ))}
+             
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              {canEditEta && (
+                <>
+                  <Label htmlFor="detailEta">{etaLabel(order)}</Label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      id="detailEta"
+                      type="datetime-local"
+                      value={etaInput}
+                      onChange={(event) => setEtaInput(event.target.value)}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isSavingEta || !etaInput}
+                      onClick={() => void onSaveEta(order, etaInput)}
+                    >
+                      {isSavingEta ? "Saving..." : "Save ETA"}
+                    </Button>
+                  </div>
+                </>
+              )}
+              <Button variant="outline" onClick={onClose}>
+                Close
+              </Button>
+            </div>
+          </div>
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+    </Dialog >
   );
 }

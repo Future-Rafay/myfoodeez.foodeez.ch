@@ -4,13 +4,17 @@ import {
   PAYMENT_DONE,
   STATUS_CODE_BY_NAME,
   canTransitionOrderStatus,
+  countsAsRevenue,
   isStripePaidOrder,
   normalizeOrderStatus,
   normalizeOrderType,
   type OrderStatusName,
   type OrderType,
 } from "@/lib/orderStatus";
-import { createBusinessNotification } from "@/lib/businessNotifications";
+import {
+  finalizeOrderInventory,
+  releaseOrderInventory,
+} from "@/lib/inventory";
 import prisma from "@/lib/prisma";
 
 export type NormalizedOrderStatus = OrderStatusName;
@@ -45,6 +49,10 @@ export type AdminOrderRow = {
   ORDER_TYPE: OrderType;
   PAYMENT_MODE: string | null;
   PAYMENT_DONE: number | null;
+  STRIPE_PAYMENT_INTENT_ID: string | null;
+  STRIPE_REFUND_ID: string | null;
+  STRIPE_REFUND_STATUS: string | null;
+  STRIPE_REFUNDED_DATETIME: string | null;
   GROSS_AMOUNT: number;
   TAX_AMOUNT: number;
   NET_AMOUNT: number;
@@ -100,6 +108,24 @@ function toNumber(value: unknown) {
   }
 
   return Number(value ?? 0);
+}
+
+function decimalToCents(value: unknown) {
+  const text = String(value ?? "0");
+  if (!/^\d+(\.\d+)?$/.test(text)) throw new Error("Invalid refund amount");
+
+  const [whole, fraction = ""] = text.split(".");
+  const cents =
+    BigInt(whole) * BigInt(100) +
+    BigInt(fraction.padEnd(2, "0").slice(0, 2));
+  if (cents <= BigInt(0)) {
+    throw new Error("Order final amount must be greater than 0");
+  }
+  if (cents > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("Refund amount is too large");
+  }
+
+  return Number(cents);
 }
 
 function unique<T>(items: T[]) {
@@ -263,6 +289,11 @@ async function buildOrderRows(
       ORDER_TYPE: normalizeOrderType(order.ORDER_TYPE),
       PAYMENT_MODE: order.PAYMENT_MODE,
       PAYMENT_DONE: order.PAYMENT_DONE,
+      STRIPE_PAYMENT_INTENT_ID: order.STRIPE_PAYMENT_INTENT_ID,
+      STRIPE_REFUND_ID: order.STRIPE_REFUND_ID,
+      STRIPE_REFUND_STATUS: order.STRIPE_REFUND_STATUS,
+      STRIPE_REFUNDED_DATETIME:
+        order.STRIPE_REFUNDED_DATETIME?.toISOString() || null,
       GROSS_AMOUNT: toNumber(order.ORDER_GROSS_AMOUNT),
       TAX_AMOUNT: toNumber(order.ORDER_TAX_AMOUNT),
       NET_AMOUNT: toNumber(order.ORDER_NET_AMOUNT),
@@ -329,6 +360,8 @@ async function getOrdersKpis(businessId: number): Promise<OrdersKpis> {
       ORDER_STATUS: true,
       ORDER_FINAL_AMOUNT: true,
       CREATION_DATETIME: true,
+      PAYMENT_DONE: true,
+      STRIPE_REFUND_STATUS: true,
     },
   });
 
@@ -346,7 +379,8 @@ async function getOrdersKpis(businessId: number): Promise<OrdersKpis> {
       if (
         order.CREATION_DATETIME &&
         order.CREATION_DATETIME >= todayStart &&
-        order.CREATION_DATETIME <= todayEnd
+        order.CREATION_DATETIME <= todayEnd &&
+        countsAsRevenue(order)
       ) {
         kpi.revenue_today += toNumber(order.ORDER_FINAL_AMOUNT);
       }
@@ -457,6 +491,10 @@ export async function updateOrderStatus(
     throw new Error("Order not found");
   }
 
+  if (nextStatus === "rejected" && normalizeOrderStatus(order.ORDER_STATUS) === "rejected") {
+    return (await buildOrderRows([order]))[0];
+  }
+
   if (
     !canTransitionOrderStatus(order.ORDER_STATUS, nextStatus, order.ORDER_TYPE)
   ) {
@@ -468,7 +506,12 @@ export async function updateOrderStatus(
   }
 
   if (nextStatus === "rejected" && isStripePaidOrder(order)) {
-    throw new Error("Stripe refund required before rejection");
+    try {
+      await refundOrderInternal(parsedBusinessId, order);
+    } catch (error) {
+      const detail = error instanceof Error ? ` ${error.message}` : "";
+      throw new Error(`Refund failed, so the order was not rejected.${detail}`);
+    }
   }
 
   const now = new Date();
@@ -478,16 +521,10 @@ export async function updateOrderStatus(
 
   if (nextStatus === "delivered") {
     data.DELIVERY_DATETIME = now;
-    if (order.PAYMENT_MODE?.toLowerCase().includes("cash")) {
-      data.PAYMENT_DONE = PAYMENT_DONE.PAID;
-    }
   }
 
   if (nextStatus === "picked_up") {
     data.DELIVERY_DATETIME = now;
-    if (order.PAYMENT_DONE === PAYMENT_DONE.PENDING) {
-      data.PAYMENT_DONE = PAYMENT_DONE.PAID;
-    }
   }
 
   if (nextStatus === "rejected") {
@@ -496,27 +533,57 @@ export async function updateOrderStatus(
     data.REJECTED_DATETIME = now;
   }
 
-  const updatedOrder = await prisma.business_order.update({
-    where: { BUSINESS_ORDER_ID: parsedOrderId },
-    data,
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const nextOrder = await tx.business_order.update({
+      where: { BUSINESS_ORDER_ID: parsedOrderId },
+      data,
+    });
+
+    if (nextStatus === "delivered" || nextStatus === "picked_up") {
+      await finalizeOrderInventory(tx, parsedOrderId);
+    }
+
+    if (nextStatus === "rejected") {
+      await releaseOrderInventory(tx, parsedOrderId);
+    }
+
+    return nextOrder;
   });
 
-  if (nextStatus === "rejected") {
-    await createBusinessNotification({
-      businessId: parsedBusinessId,
-      type: "order",
-      title: "Order rejected",
-      message: `Order #${parsedOrderId} rejected: ${options.rejectionReason?.trim()}`,
-      linkUrl: `/dashboard/${parsedBusinessId}/orders?orderId=${parsedOrderId}`,
-      metadata: {
-        orderId: parsedOrderId,
-        orderType: normalizeOrderType(order.ORDER_TYPE),
-        reason: options.rejectionReason?.trim(),
-      },
-    }).catch((error) => {
-      console.error("Failed to create rejection notification:", error);
-    });
+  return (await buildOrderRows([updatedOrder]))[0];
+}
+
+export async function updateOrderPayment(
+  businessId: number,
+  orderId: number,
+  paymentDone: number
+) {
+  const parsedBusinessId = Number(businessId);
+  const parsedOrderId = Number(orderId);
+
+  if (!Number.isInteger(parsedBusinessId) || !Number.isInteger(parsedOrderId)) {
+    throw new Error("Invalid route params");
   }
+
+  if (paymentDone !== PAYMENT_DONE.PAID) {
+    throw new Error("Invalid payment status");
+  }
+
+  await requireOrdersBusinessAccess(parsedBusinessId);
+
+  const order = await prisma.business_order.findFirst({
+    where: {
+      BUSINESS_ORDER_ID: parsedOrderId,
+      BUSINESS_ID: parsedBusinessId,
+    },
+  });
+
+  if (!order) throw new Error("Order not found");
+
+  const updatedOrder = await prisma.business_order.update({
+    where: { BUSINESS_ORDER_ID: parsedOrderId },
+    data: { PAYMENT_DONE: PAYMENT_DONE.PAID },
+  });
 
   return (await buildOrderRows([updatedOrder]))[0];
 }
@@ -549,6 +616,16 @@ export async function updateOrderEta(
 
   if (!order) throw new Error("Order not found");
 
+  if (
+    order.PAYMENT_DONE === PAYMENT_DONE.REFUNDED ||
+    order.STRIPE_REFUND_STATUS ||
+    ["rejected", "delivered", "picked_up"].includes(
+      normalizeOrderStatus(order.ORDER_STATUS)
+    )
+  ) {
+    throw new Error("ETA cannot be changed after refund or order closure");
+  }
+
   const updatedOrder = await prisma.business_order.update({
     where: { BUSINESS_ORDER_ID: parsedOrderId },
     data: {
@@ -560,7 +637,7 @@ export async function updateOrderEta(
   return (await buildOrderRows([updatedOrder]))[0];
 }
 
-export async function refundOrderPlaceholder(businessId: number, orderId: number) {
+export async function refundOrder(businessId: number, orderId: number) {
   const parsedBusinessId = Number(businessId);
   const parsedOrderId = Number(orderId);
 
@@ -579,7 +656,72 @@ export async function refundOrderPlaceholder(businessId: number, orderId: number
 
   if (!order) throw new Error("Order not found");
 
-  throw new Error(
-    "Stripe refund is not implemented in admin yet because STRIPE_PAYMENT_INTENT_ID is not stored."
-  );
+  const updatedOrder = await refundOrderInternal(parsedBusinessId, order);
+  return (await buildOrderRows([updatedOrder]))[0];
+}
+
+async function createStripeRefund(paymentIntentId: string, amount: number) {
+  const secretKey = process.env.STRIPE_SECRET_KEY;
+  if (!secretKey) throw new Error("Stripe secret key is not configured.");
+
+  const response = await fetch("https://api.stripe.com/v1/refunds", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      payment_intent: paymentIntentId,
+      amount: String(amount),
+    }),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(data?.error?.message || "Stripe refund failed.");
+  }
+
+  return {
+    id: String(data?.id || ""),
+    status: String(data?.status || "pending"),
+  };
+}
+
+async function refundOrderInternal(
+  businessId: number,
+  order: Awaited<ReturnType<typeof prisma.business_order.findFirst>>
+) {
+  if (!order) throw new Error("Order not found");
+
+  if (order.STRIPE_REFUND_ID || order.PAYMENT_DONE === PAYMENT_DONE.REFUNDED) {
+    return order;
+  }
+
+  if (!isStripePaidOrder(order)) {
+    throw new Error("Only paid Stripe/card orders can be refunded.");
+  }
+
+  if (!order.STRIPE_PAYMENT_INTENT_ID) {
+    throw new Error(
+      "Cannot refund this order because Stripe payment reference is missing."
+    );
+  }
+
+  const amount = decimalToCents(order.ORDER_FINAL_AMOUNT);
+  const refund = await createStripeRefund(order.STRIPE_PAYMENT_INTENT_ID, amount);
+  if (!refund.id) throw new Error("Stripe refund response was missing an id.");
+
+  const updatedOrder = await prisma.business_order.update({
+    where: { BUSINESS_ORDER_ID: order.BUSINESS_ORDER_ID },
+    data: {
+      STRIPE_REFUND_ID: refund.id,
+      STRIPE_REFUND_STATUS: refund.status,
+      STRIPE_REFUNDED_DATETIME: new Date(),
+      ORDER_REFUND_AMOUNT: order.ORDER_FINAL_AMOUNT,
+      PAYMENT_DONE:
+        refund.status === "succeeded" ? PAYMENT_DONE.REFUNDED : PAYMENT_DONE.PAID,
+    },
+  });
+
+  return updatedOrder;
 }

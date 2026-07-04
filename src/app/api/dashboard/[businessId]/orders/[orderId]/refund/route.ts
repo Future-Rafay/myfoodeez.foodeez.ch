@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { refundOrderPlaceholder } from "@/services/orders-management";
+import { refundOrder } from "@/services/orders-management";
 
 type OrderRefundRouteContext = {
   params: Promise<{ businessId: string; orderId: string }>;
@@ -9,7 +9,11 @@ export async function POST(_req: Request, { params }: OrderRefundRouteContext) {
   const { businessId: businessIdParam, orderId: orderIdParam } = await params;
 
   try {
-    await refundOrderPlaceholder(Number(businessIdParam), Number(orderIdParam));
+    const order = await refundOrder(
+      Number(businessIdParam),
+      Number(orderIdParam)
+    );
+    return NextResponse.json(order);
   } catch (error) {
     if (error instanceof Error) {
       if (error.message === "Unauthorized") {
@@ -31,15 +35,9 @@ export async function POST(_req: Request, { params }: OrderRefundRouteContext) {
         );
       }
 
-      return NextResponse.json({ error: error.message }, { status: 501 });
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
   }
 
-  return NextResponse.json(
-    {
-      error:
-        "Stripe refund is not implemented in admin yet because STRIPE_PAYMENT_INTENT_ID is not stored.",
-    },
-    { status: 501 }
-  );
+  return NextResponse.json({ error: "Refund failed" }, { status: 500 });
 }
