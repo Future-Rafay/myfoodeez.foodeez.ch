@@ -61,6 +61,8 @@ import {
   normalizeOrderType,
   PAYMENT_DONE,
 } from "@/lib/orderStatus";
+import { getDisplayEta } from "@/lib/eta";
+import { getDisplayOrderNumber } from "@/lib/orderNumber";
 import { cn } from "@/lib/utils";
 import type {
   AdminOrderRow,
@@ -106,12 +108,6 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   hour: "numeric",
   minute: "2-digit",
-});
-
-const timeFormatter = new Intl.DateTimeFormat("en-GB", {
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
 });
 
 const statusOptions: { label: string; value: StatusFilter }[] = [
@@ -188,10 +184,6 @@ function getEtaDate(order: AdminOrderRow, prepDefaults: OrderPrepDefaults) {
   return date;
 }
 
-function formatTimeOnly(date: Date | null) {
-  return date ? timeFormatter.format(date) : "Not available";
-}
-
 function formatDatetimeLocal(date: Date) {
   const offsetMs = date.getTimezoneOffset() * 60_000;
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
@@ -201,6 +193,10 @@ function etaLabel(order: AdminOrderRow) {
   return order.ORDER_TYPE === "pickup"
     ? "Estimated pickup time"
     : "Estimated delivery time";
+}
+
+function orderNumberLabel(order: AdminOrderRow) {
+  return order.displayOrderNumber || getDisplayOrderNumber(order);
 }
 
 export default function AdminOrdersPage({ businessId }: { businessId: number }) {
@@ -626,7 +622,7 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                         className="hover:bg-gray-50"
                       >
                         <TableCell className="font-medium text-gray-950">
-                          #{order.BUSINESS_ORDER_ID}
+                          {orderNumberLabel(order)}
                         </TableCell>
                         <TableCell>
                           <div className="font-medium text-gray-950">
@@ -803,10 +799,12 @@ function EtaTime({
   order: AdminOrderRow;
   prepDefaults: OrderPrepDefaults;
 }) {
+  const eta = getDisplayEta(order, prepDefaults);
+
   return (
     <div className="flex items-center gap-2">
-      <span>{formatTimeOnly(getEtaDate(order, prepDefaults))}</span>
-      {!order.DELIVERY_ET && (
+      <span>{eta.time}</span>
+      {eta.isDefault && (
         <Badge variant="outline" className="border-gray-200 bg-gray-50 text-gray-600">
           Default
         </Badge>
@@ -909,7 +907,7 @@ function RejectOrderModal({
     <Dialog open={Boolean(order)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Reject order #{order.BUSINESS_ORDER_ID}</DialogTitle>
+          <DialogTitle>Reject order {orderNumberLabel(order)}</DialogTitle>
           <DialogDescription>
             Choose a reason. This action cannot be undone.
           </DialogDescription>
@@ -1013,7 +1011,7 @@ function OrderDetailsModal({
     <Dialog open={Boolean(order)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl">
         <DialogHeader>
-          <DialogTitle>Order #{order.BUSINESS_ORDER_ID}</DialogTitle>
+          <DialogTitle>Order {orderNumberLabel(order)}</DialogTitle>
           <DialogDescription>
             Full order, customer, payment, and item details.
           </DialogDescription>
@@ -1023,7 +1021,7 @@ function OrderDetailsModal({
           <div className="rounded-lg border border-gray-200 p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-gray-950">
-                Order #{order.BUSINESS_ORDER_ID}
+                Order {orderNumberLabel(order)}
               </h3>
               <StatusBadge order={order} />
             </div>
@@ -1040,7 +1038,7 @@ function OrderDetailsModal({
                 label={etaLabel(order)}
                 value={
                   <span className="inline-flex items-center justify-end gap-2">
-                    {formatTimeOnly(getEtaDate(order, prepDefaults))}
+                    {getDisplayEta(order, prepDefaults).time}
                     {!order.DELIVERY_ET && (
                       <Badge
                         variant="outline"

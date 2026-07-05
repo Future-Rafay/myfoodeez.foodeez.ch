@@ -8,6 +8,7 @@ import {
   normalizeOrderStatus,
   type OrderStatusName,
 } from "@/lib/orderStatus";
+import { getDisplayOrderNumber } from "@/lib/orderNumber";
 import prisma from "@/lib/prisma";
 import { S3Storage } from "@/lib/s3-storage";
 
@@ -32,6 +33,7 @@ export type DashboardKpis = {
 
 export type RecentOrderRow = {
   id: number;
+  orderNumber: string;
   customer: string;
   items: number;
   total: number;
@@ -252,6 +254,7 @@ export async function getBusinessDashboardData(businessId: number) {
     kpis,
     recentOrders: recentOrders.map<RecentOrderRow>((order) => ({
       id: order.BUSINESS_ORDER_ID,
+      orderNumber: getDisplayOrderNumber(order),
       customer: formatCustomer(order.FIRST_NAME, order.LAST_NAME),
       items: orderDetails
         .filter((detail) => detail.BUSINESS_ORDER_ID === order.BUSINESS_ORDER_ID)

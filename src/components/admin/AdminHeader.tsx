@@ -19,6 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { formatOrderNumberFromId } from "@/lib/orderNumber";
 
 interface AdminHeaderProps {
   businessId: string;
@@ -78,15 +79,29 @@ function relativeTime(value: string | null) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function metadataOrderId(notification: BusinessNotification) {
+function metadataOrderLabel(notification: BusinessNotification) {
   try {
     const metadata = JSON.parse(notification.METADATA_JSON || "{}") as {
       orderId?: unknown;
+      orderNumber?: unknown;
     };
-    return Number(metadata.orderId);
+    if (metadata.orderNumber) return String(metadata.orderNumber).trim();
+
+    const orderId = Number(metadata.orderId);
+    return Number.isInteger(orderId) ? formatOrderNumberFromId(orderId) : null;
   } catch {
     return null;
   }
+}
+
+function notificationMessage(notification: BusinessNotification) {
+  const orderLabel = metadataOrderLabel(notification);
+
+  if (orderLabel && notification.NOTIFICATION_TYPE === "order") {
+    return `Order ${orderLabel} is now preparing`;
+  }
+
+  return notification.MESSAGE;
 }
 
 export default function AdminHeader({
@@ -141,11 +156,8 @@ export default function AdminHeader({
 
     if ("Notification" in window && Notification.permission === "granted") {
       freshOrderNotifications.forEach((notification) => {
-        const orderId = metadataOrderId(notification);
         new Notification("New order received", {
-          body:
-            notification.MESSAGE ||
-            (orderId ? `Order #${orderId} is now preparing` : undefined),
+          body: notificationMessage(notification) || undefined,
         });
       });
     }
@@ -275,9 +287,9 @@ export default function AdminHeader({
                       <p className="mt-1 text-sm font-semibold text-gray-950">
                         {notification.TITLE}
                       </p>
-                      {notification.MESSAGE && (
+                      {notificationMessage(notification) && (
                         <p className="mt-1 line-clamp-2 text-sm text-gray-500">
-                          {notification.MESSAGE}
+                          {notificationMessage(notification)}
                         </p>
                       )}
                       {!notification.IS_READ && (

@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { createBusinessNotification } from "@/lib/businessNotifications";
 import { calculateDeliveryQuote } from "@/lib/fulfillment";
 import { reserveOrderInventory } from "@/lib/inventory";
+import { generateOrderNumberFromId } from "@/lib/orderNumber";
 
 type RouteContext = {
   params: Promise<{ businessId: string }>;
@@ -159,6 +160,7 @@ export async function POST(req: Request, { params }: RouteContext) {
   const visitorId = Number(body.visitorId || 0);
   const now = new Date();
   const ids = await nextIds();
+  const orderNumber = generateOrderNumberFromId(ids.orderId);
 
   let created;
   try {
@@ -201,6 +203,12 @@ export async function POST(req: Request, { params }: RouteContext) {
         },
       });
 
+      await tx.$executeRaw`
+        UPDATE business_order
+        SET ORDER_NUMBER = ${orderNumber}
+        WHERE BUSINESS_ORDER_ID = ${order.BUSINESS_ORDER_ID}
+      `;
+
       await tx.business_order_detail.createMany({
         data: normalizedItems.map((item, index) => {
           const product = products.find(
@@ -238,10 +246,11 @@ export async function POST(req: Request, { params }: RouteContext) {
     businessId,
     type: "order",
     title: "New order received",
-    message: `Order #${created.BUSINESS_ORDER_ID} is now preparing`,
+    message: `Order ${orderNumber} is now preparing`,
     linkUrl: `/dashboard/${businessId}/orders?orderId=${created.BUSINESS_ORDER_ID}`,
     metadata: {
       orderId: created.BUSINESS_ORDER_ID,
+      orderNumber,
       orderType: created.ORDER_TYPE,
     },
   }).catch((error) => {
@@ -251,6 +260,8 @@ export async function POST(req: Request, { params }: RouteContext) {
   return NextResponse.json(
     {
       orderId: created.BUSINESS_ORDER_ID,
+      orderNumber,
+      ORDER_NUMBER: orderNumber,
       orderType: created.ORDER_TYPE,
       orderStatus: created.ORDER_STATUS,
       paymentDone: created.PAYMENT_DONE,

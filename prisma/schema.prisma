@@ -302,6 +302,7 @@ model business_order {
   STRIPE_REFUND_ID           String?   @db.VarChar(255)
   STRIPE_REFUND_STATUS       String?   @db.VarChar(50)
   STRIPE_REFUNDED_DATETIME   DateTime? @db.DateTime(0)
+  ORDER_NUMBER               String?   @unique(map: "business_order_ORDER_NUMBER_unique") @db.VarChar(20)
 
   @@index([STRIPE_CHECKOUT_SESSION_ID], map: "STRIPE_CHECKOUT_SESSION_ID")
   @@index([STRIPE_PAYMENT_INTENT_ID], map: "STRIPE_PAYMENT_INTENT_ID")

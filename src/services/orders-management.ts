@@ -15,6 +15,7 @@ import {
   finalizeOrderInventory,
   releaseOrderInventory,
 } from "@/lib/inventory";
+import { getDisplayOrderNumber } from "@/lib/orderNumber";
 import prisma from "@/lib/prisma";
 
 export type NormalizedOrderStatus = OrderStatusName;
@@ -35,6 +36,8 @@ export type OrderItemRow = {
 
 export type AdminOrderRow = {
   BUSINESS_ORDER_ID: number;
+  ORDER_NUMBER: string | null;
+  displayOrderNumber: string;
   VISITOR_FIRST_NAME: string | null;
   VISITOR_LAST_NAME: string | null;
   VISITOR_PHONE: string | null;
@@ -149,6 +152,15 @@ function parseStatusFilter(status: string | null | undefined) {
 
   const normalized = normalizeOrderStatus(status);
   return STATUS_CODE_BY_NAME[normalized];
+}
+
+function parseOrderSearchId(search: string) {
+  const normalized = search.trim().toUpperCase();
+  const numeric = normalized.startsWith("FDZ.")
+    ? normalized.slice(4)
+    : normalized;
+  const orderId = Number(numeric);
+  return Number.isInteger(orderId) ? orderId : null;
 }
 
 function parseDate(value: string | null | undefined, boundary: "start" | "end") {
@@ -275,6 +287,9 @@ async function buildOrderRows(
 
     return {
       BUSINESS_ORDER_ID: order.BUSINESS_ORDER_ID,
+      ORDER_NUMBER:
+        (order as { ORDER_NUMBER?: string | null }).ORDER_NUMBER || null,
+      displayOrderNumber: getDisplayOrderNumber(order),
       VISITOR_FIRST_NAME: order.FIRST_NAME,
       VISITOR_LAST_NAME: order.LAST_NAME,
       VISITOR_PHONE: order.PHONE_NUMBER,
@@ -338,9 +353,10 @@ function buildOrderWhere(params: ListOrdersParams) {
   }
 
   if (search) {
-    const orderId = Number(search);
+    const orderId = parseOrderSearchId(search);
     where.OR = [
-      ...(Number.isInteger(orderId) ? [{ BUSINESS_ORDER_ID: orderId }] : []),
+      ...(orderId ? [{ BUSINESS_ORDER_ID: orderId }] : []),
+      { ORDER_NUMBER: { contains: search } },
       { FIRST_NAME: { contains: search } },
       { LAST_NAME: { contains: search } },
       { EMAIL_ADDRESS: { contains: search } },

@@ -179,7 +179,7 @@ export default async function DashboardPage({ params }: DashboardPageProps) {
                   {data.recentOrders.map((order) => (
                     <TableRow key={order.id} className="hover:bg-gray-50">
                       <TableCell className="font-medium text-gray-950">
-                        #{order.id}
+                        {order.orderNumber}
                       </TableCell>
                       <TableCell>{order.customer}</TableCell>
                       <TableCell>{order.items}</TableCell>
