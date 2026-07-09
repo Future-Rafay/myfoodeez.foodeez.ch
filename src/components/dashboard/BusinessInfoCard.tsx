@@ -4,7 +4,7 @@ import { Card, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { MapPin, Phone, Mail, Globe } from "lucide-react";
 import Image from "next/image";
-import { business_detail_view_all } from "@prisma/client";
+import { business_detail_view_all } from "../../../prisma/generated/prisma/client";
 import { resolveMediaUrl } from "@/lib/media";
 
 interface BusinessInfoCardProps {

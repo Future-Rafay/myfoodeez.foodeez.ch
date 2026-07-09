@@ -7,7 +7,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import DeleteProductModal from "./DeleteProductModal";
-import { business_product, business_product_tag } from "@prisma/client";
+import { business_product, business_product_tag } from "../../../prisma/generated/prisma/client";
 import { useBusinessId } from "@/components/providers/BusinessProvider";
 import TagFilter from "./TagFilter";
 import { getBusinessProducts } from "@/services/HelperFunctions";

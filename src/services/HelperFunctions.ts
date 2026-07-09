@@ -2,7 +2,7 @@
 
 import { SerializedProduct } from "@/components/products/ProductTable";
 import prisma from "@/lib/prisma";
-import { business_detail_view_all, business_order, business_owner, business_owner_2_business } from "@prisma/client";
+import { business_detail_view_all, business_order, business_owner, business_owner_2_business } from "../../prisma/generated/prisma/client";
 
 export async function getBusinessOwner(visitorsAccountId: number) {
     console.log("[getBusinessOwner] Looking up VISITORS_ACCOUNT_ID:", visitorsAccountId);
