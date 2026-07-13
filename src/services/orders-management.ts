@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
@@ -23,6 +24,46 @@ export type NormalizedOrderStatus = OrderStatusName;
 export type OrderStatus = NormalizedOrderStatus;
 
 export type OrderStatusValue = number | string | null;
+
+type CustomerNotificationType =
+  | "eta_updated"
+  | "status_updated"
+  | "payment_updated"
+  | "rejection_updated";
+
+function customerNotificationData(
+  order: Awaited<ReturnType<typeof prisma.business_order.findFirst>>,
+  type: CustomerNotificationType,
+  title: string,
+  message: string,
+  changedField: string,
+  value: unknown
+) {
+  if (!order?.VISITOR_ID || order.VISITOR_ID < 1) return null;
+
+  const snapshot = {
+    eta: order.DELIVERY_ET?.toISOString() ?? null,
+    status: order.ORDER_STATUS,
+    payment: order.PAYMENT_DONE,
+    refundAmount: Number(order.ORDER_REFUND_AMOUNT ?? 0),
+    refundStatus: order.STRIPE_REFUND_STATUS,
+    rejectionReason: order.ORDER_REJECTION_REASON,
+    rejectionNote: order.ORDER_REJECTION_NOTE,
+  };
+
+  return {
+    VISITORS_ACCOUNT_ID: order.VISITOR_ID,
+    BUSINESS_ORDER_ID: order.BUSINESS_ORDER_ID,
+    BUSINESS_ID: order.BUSINESS_ID,
+    EVENT_KEY: createHash("sha256")
+      .update(`${order.BUSINESS_ORDER_ID}:${type}:${JSON.stringify(value)}`)
+      .digest("hex"),
+    NOTIFICATION_TYPE: type,
+    TITLE: title,
+    MESSAGE: message,
+    METADATA_JSON: JSON.stringify({ changedField, snapshot }),
+  };
+}
 
 export type OrderItemRow = {
   BUSINESS_ORDER_DETAIL_ID: number;
@@ -563,6 +604,35 @@ export async function updateOrderStatus(
       await releaseOrderInventory(tx, parsedOrderId);
     }
 
+    const orderNumber = getDisplayOrderNumber(nextOrder);
+    const notifications = [
+      customerNotificationData(
+        nextOrder,
+        "status_updated",
+        `${orderNumber} status changed`,
+        `Your order is now ${nextStatus.replaceAll("_", " ")}.`,
+        "status",
+        nextOrder.ORDER_STATUS
+      ),
+      nextStatus === "rejected"
+        ? customerNotificationData(
+            nextOrder,
+            "rejection_updated",
+            `${orderNumber} rejection updated`,
+            `Your order was rejected: ${nextOrder.ORDER_REJECTION_REASON}.`,
+            "rejection",
+            [nextOrder.ORDER_REJECTION_REASON, nextOrder.ORDER_REJECTION_NOTE]
+          )
+        : null,
+    ].filter((notification) => notification !== null);
+
+    if (notifications.length) {
+      await tx.customer_order_notification.createMany({
+        data: notifications,
+        skipDuplicates: true,
+      });
+    }
+
     return nextOrder;
   });
 
@@ -596,9 +666,30 @@ export async function updateOrderPayment(
 
   if (!order) throw new Error("Order not found");
 
-  const updatedOrder = await prisma.business_order.update({
-    where: { BUSINESS_ORDER_ID: parsedOrderId },
-    data: { PAYMENT_DONE: PAYMENT_DONE.PAID },
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const nextOrder = await tx.business_order.update({
+      where: { BUSINESS_ORDER_ID: parsedOrderId },
+      data: { PAYMENT_DONE: PAYMENT_DONE.PAID },
+    });
+    const notification = customerNotificationData(
+      nextOrder,
+      "payment_updated",
+      `${getDisplayOrderNumber(nextOrder)} payment updated`,
+      "Your payment was marked as paid.",
+      "payment",
+      [
+        nextOrder.PAYMENT_DONE,
+        Number(nextOrder.ORDER_REFUND_AMOUNT ?? 0),
+        nextOrder.STRIPE_REFUND_STATUS,
+      ]
+    );
+    if (notification) {
+      await tx.customer_order_notification.createMany({
+        data: [notification],
+        skipDuplicates: true,
+      });
+    }
+    return nextOrder;
   });
 
   return (await buildOrderRows([updatedOrder]))[0];
@@ -642,12 +733,32 @@ export async function updateOrderEta(
     throw new Error("ETA cannot be changed after refund or order closure");
   }
 
-  const updatedOrder = await prisma.business_order.update({
-    where: { BUSINESS_ORDER_ID: parsedOrderId },
-    data: {
-      DELIVERY_ET: etaDate,
-      ETA_ACKNOWLEDGED_DATETIME: new Date(),
-    },
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const nextOrder = await tx.business_order.update({
+      where: { BUSINESS_ORDER_ID: parsedOrderId },
+      data: {
+        DELIVERY_ET: etaDate,
+        ETA_ACKNOWLEDGED_DATETIME: new Date(),
+      },
+    });
+    const notification = customerNotificationData(
+      nextOrder,
+      "eta_updated",
+      `${getDisplayOrderNumber(nextOrder)} ETA changed`,
+      `Your order ETA was updated to ${etaDate.toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}.`,
+      "eta",
+      nextOrder.DELIVERY_ET?.toISOString() ?? null
+    );
+    if (notification) {
+      await tx.customer_order_notification.createMany({
+        data: [notification],
+        skipDuplicates: true,
+      });
+    }
+    return nextOrder;
   });
 
   return (await buildOrderRows([updatedOrder]))[0];
@@ -727,16 +838,39 @@ async function refundOrderInternal(
   const refund = await createStripeRefund(order.STRIPE_PAYMENT_INTENT_ID, amount);
   if (!refund.id) throw new Error("Stripe refund response was missing an id.");
 
-  const updatedOrder = await prisma.business_order.update({
-    where: { BUSINESS_ORDER_ID: order.BUSINESS_ORDER_ID },
-    data: {
-      STRIPE_REFUND_ID: refund.id,
-      STRIPE_REFUND_STATUS: refund.status,
-      STRIPE_REFUNDED_DATETIME: new Date(),
-      ORDER_REFUND_AMOUNT: order.ORDER_FINAL_AMOUNT,
-      PAYMENT_DONE:
-        refund.status === "succeeded" ? PAYMENT_DONE.REFUNDED : PAYMENT_DONE.PAID,
-    },
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const nextOrder = await tx.business_order.update({
+      where: { BUSINESS_ORDER_ID: order.BUSINESS_ORDER_ID },
+      data: {
+        STRIPE_REFUND_ID: refund.id,
+        STRIPE_REFUND_STATUS: refund.status,
+        STRIPE_REFUNDED_DATETIME: new Date(),
+        ORDER_REFUND_AMOUNT: order.ORDER_FINAL_AMOUNT,
+        PAYMENT_DONE:
+          refund.status === "succeeded" ? PAYMENT_DONE.REFUNDED : PAYMENT_DONE.PAID,
+      },
+    });
+    const notification = customerNotificationData(
+      nextOrder,
+      "payment_updated",
+      `${getDisplayOrderNumber(nextOrder)} payment updated`,
+      refund.status === "succeeded"
+        ? "Your payment was refunded."
+        : "Your refund is being processed.",
+      "payment",
+      [
+        nextOrder.PAYMENT_DONE,
+        Number(nextOrder.ORDER_REFUND_AMOUNT ?? 0),
+        nextOrder.STRIPE_REFUND_STATUS,
+      ]
+    );
+    if (notification) {
+      await tx.customer_order_notification.createMany({
+        data: [notification],
+        skipDuplicates: true,
+      });
+    }
+    return nextOrder;
   });
 
   return updatedOrder;

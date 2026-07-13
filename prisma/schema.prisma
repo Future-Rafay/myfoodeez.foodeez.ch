@@ -567,6 +567,24 @@ model business_notification {
   @@index([IS_READ], map: "idx_business_notification_is_read")
 }
 
+model customer_order_notification {
+  CUSTOMER_ORDER_NOTIFICATION_ID Int       @id @default(autoincrement())
+  VISITORS_ACCOUNT_ID            Int
+  BUSINESS_ORDER_ID              Int
+  BUSINESS_ID                    Int?
+  EVENT_KEY                      String    @unique(map: "customer_order_notification_event_key") @db.VarChar(64)
+  NOTIFICATION_TYPE              String    @db.VarChar(30)
+  TITLE                          String    @db.VarChar(150)
+  MESSAGE                        String?   @db.Text
+  METADATA_JSON                  String?   @db.LongText
+  IS_READ                        Int?      @default(0) @db.TinyInt
+  CREATION_DATETIME              DateTime? @default(now()) @db.DateTime(0)
+
+  @@index([CREATION_DATETIME], map: "idx_customer_notification_created")
+  @@index([BUSINESS_ORDER_ID], map: "idx_customer_notification_order")
+  @@index([VISITORS_ACCOUNT_ID, IS_READ], map: "idx_customer_notification_visitor_read")
+}
+
 view adlink_view {
   ADLINK_ID     Int     @default(0)
   BUSINESS_NAME String? @db.VarChar(255)
