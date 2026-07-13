@@ -19,18 +19,23 @@ export default function SignInPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const res = await signIn("credentials", {
-      email,
-      password,
-      redirect: false,
-    });
+    setError(null);
+    try {
+      const res = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
 
-    setLoading(false);
-
-    if (res?.ok) {
-      router.push("/dashboard"); // Change to your admin dashboard route
-    } else {
-      setError("Invalid email or password");
+      if (res?.ok) {
+        router.push("/dashboard");
+      } else {
+        setError("Invalid email or password");
+      }
+    } catch {
+      setError("Unable to sign in right now. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 

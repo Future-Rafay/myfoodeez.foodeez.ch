@@ -1,7 +1,6 @@
 "use client";
 
 import { ReactNode, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import AdminHeader from "@/components/admin/AdminHeader";
 import AdminMobileDrawer from "@/components/admin/AdminMobileDrawer";
 import AdminSidebar from "@/components/admin/AdminSidebar";
@@ -25,7 +24,6 @@ export default function AdminShell({
   restaurantName,
   children,
 }: AdminShellProps) {
-  const router = useRouter();
   const setBusinessId = useSetBusinessId();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [resolvedRestaurantName, setResolvedRestaurantName] = useState(
@@ -37,11 +35,6 @@ export default function AdminShell({
   useEffect(() => {
     setBusinessId(businessId);
   }, [businessId, setBusinessId]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => router.refresh(), 30_000);
-    return () => window.clearInterval(interval);
-  }, [router]);
 
   useEffect(() => {
     let isMounted = true;

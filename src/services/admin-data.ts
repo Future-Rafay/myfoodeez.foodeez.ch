@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
-  countsAsRevenue,
+  PAYMENT_DONE,
+  STATUS_CODE_BY_NAME,
   normalizeOrderStatus,
   type OrderStatusName,
 } from "@/lib/orderStatus";
@@ -216,17 +217,44 @@ export async function getOwnedBusinesses(): Promise<AdminBusinessCard[]> {
 export async function getBusinessDashboardData(businessId: number) {
   await requireBusinessAccess(businessId);
 
-  const [orders, products] = await Promise.all([
+  const [recentOrders, totalOrders, revenue, pendingOrders, activeProducts] = await Promise.all([
     prisma.business_order.findMany({
       where: { BUSINESS_ID: businessId },
       orderBy: { CREATION_DATETIME: "desc" },
+      take: 10,
     }),
-    prisma.business_product.findMany({
-      where: { BUSINESS_ID: businessId },
+    prisma.business_order.count({ where: { BUSINESS_ID: businessId } }),
+    prisma.business_order.aggregate({
+      where: {
+        BUSINESS_ID: businessId,
+        AND: [
+          { OR: [{ ORDER_STATUS: null }, { ORDER_STATUS: { not: STATUS_CODE_BY_NAME.rejected } }] },
+          { OR: [{ PAYMENT_DONE: null }, { PAYMENT_DONE: { notIn: [PAYMENT_DONE.REFUNDED, PAYMENT_DONE.FAILED] } }] },
+        ],
+        STRIPE_REFUND_STATUS: null,
+      },
+      _sum: { ORDER_FINAL_AMOUNT: true },
     }),
+    prisma.business_order.count({
+      where: {
+        BUSINESS_ID: businessId,
+        OR: [
+          { ORDER_STATUS: null },
+          {
+            ORDER_STATUS: {
+              notIn: [
+                STATUS_CODE_BY_NAME.delivered,
+                STATUS_CODE_BY_NAME.picked_up,
+                STATUS_CODE_BY_NAME.rejected,
+              ],
+            },
+          },
+        ],
+      },
+    }),
+    prisma.business_product.count({ where: { BUSINESS_ID: businessId, STATUS: 1 } }),
   ]);
 
-  const recentOrders = orders.slice(0, 10);
   const recentOrderIds = recentOrders.map((order) => order.BUSINESS_ORDER_ID);
   const orderDetails = recentOrderIds.length
     ? await prisma.business_order_detail.findMany({
@@ -235,19 +263,10 @@ export async function getBusinessDashboardData(businessId: number) {
     : [];
 
   const kpis: DashboardKpis = {
-    totalOrders: orders.length,
-    totalRevenue: orders.reduce(
-      (total, order) =>
-        total + (countsAsRevenue(order) ? toNumber(order.ORDER_FINAL_AMOUNT) : 0),
-      0
-    ),
-    pendingOrders: orders.filter(
-      (order) =>
-        !["delivered", "picked_up", "rejected"].includes(
-          normalizeOrderStatus(order.ORDER_STATUS)
-        )
-    ).length,
-    activeProducts: products.filter((product) => product.STATUS === 1).length,
+    totalOrders,
+    totalRevenue: toNumber(revenue._sum.ORDER_FINAL_AMOUNT),
+    pendingOrders,
+    activeProducts,
   };
 
   return {

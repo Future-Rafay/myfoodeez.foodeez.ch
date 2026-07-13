@@ -295,11 +295,16 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
   }, [loadOrders]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      void loadOrders(undefined, false);
-    }, 30_000);
+    const loadWhenVisible = () => {
+      if (!document.hidden) void loadOrders(undefined, false);
+    };
+    const interval = window.setInterval(loadWhenVisible, 30_000);
+    document.addEventListener("visibilitychange", loadWhenVisible);
 
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", loadWhenVisible);
+    };
   }, [loadOrders]);
 
   useEffect(() => {

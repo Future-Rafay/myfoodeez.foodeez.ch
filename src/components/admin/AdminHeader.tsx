@@ -165,9 +165,16 @@ export default function AdminHeader({
 
   useEffect(() => {
     askNotificationPermission();
-    void loadNotifications();
-    const interval = window.setInterval(loadNotifications, 30_000);
-    return () => window.clearInterval(interval);
+    const loadWhenVisible = () => {
+      if (!document.hidden) void loadNotifications();
+    };
+    loadWhenVisible();
+    const interval = window.setInterval(loadWhenVisible, 30_000);
+    document.addEventListener("visibilitychange", loadWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", loadWhenVisible);
+    };
   }, [askNotificationPermission, loadNotifications]);
 
   async function markRead(notification: BusinessNotification) {

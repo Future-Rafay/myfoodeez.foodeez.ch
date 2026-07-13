@@ -5,7 +5,6 @@ import {
   PAYMENT_DONE,
   STATUS_CODE_BY_NAME,
   canTransitionOrderStatus,
-  countsAsRevenue,
   isStripePaidOrder,
   normalizeOrderStatus,
   normalizeOrderType,
@@ -411,50 +410,45 @@ function buildOrderWhere(params: ListOrdersParams) {
 async function getOrdersKpis(businessId: number): Promise<OrdersKpis> {
   const todayStart = startOfDay(new Date());
   const todayEnd = endOfDay(new Date());
-  const orders = await prisma.business_order.findMany({
-    where: { BUSINESS_ID: Number(businessId) },
-    select: {
-      ORDER_STATUS: true,
-      ORDER_FINAL_AMOUNT: true,
-      CREATION_DATETIME: true,
-      PAYMENT_DONE: true,
-      STRIPE_REFUND_STATUS: true,
-    },
-  });
+  const [statusCounts, revenue] = await Promise.all([
+    prisma.business_order.groupBy({
+      by: ["ORDER_STATUS"],
+      where: { BUSINESS_ID: Number(businessId) },
+      _count: { _all: true },
+    }),
+    prisma.business_order.aggregate({
+      where: {
+        BUSINESS_ID: Number(businessId),
+        CREATION_DATETIME: { gte: todayStart, lte: todayEnd },
+        AND: [
+          { OR: [{ ORDER_STATUS: null }, { ORDER_STATUS: { not: STATUS_CODE_BY_NAME.rejected } }] },
+          { OR: [{ PAYMENT_DONE: null }, { PAYMENT_DONE: { notIn: [PAYMENT_DONE.REFUNDED, PAYMENT_DONE.FAILED] } }] },
+        ],
+        STRIPE_REFUND_STATUS: null,
+      },
+      _sum: { ORDER_FINAL_AMOUNT: true },
+    }),
+  ]);
 
-  return orders.reduce<OrdersKpis>(
-    (kpi, order) => {
-      const status = normalizeOrderStatus(order.ORDER_STATUS);
+  const kpi: OrdersKpis = {
+    new: 0,
+    preparing: 0,
+    out_for_delivery: 0,
+    ready_for_pickup: 0,
+    delivered: 0,
+    picked_up: 0,
+    rejected: 0,
+    revenue_today: toNumber(revenue._sum.ORDER_FINAL_AMOUNT),
+  };
 
-      if (status === "preparing") kpi.preparing += 1;
-      if (status === "out_for_delivery") kpi.out_for_delivery += 1;
-      if (status === "ready_for_pickup") kpi.ready_for_pickup += 1;
-      if (status === "delivered") kpi.delivered += 1;
-      if (status === "picked_up") kpi.picked_up += 1;
-      if (status === "rejected") kpi.rejected += 1;
-
-      if (
-        order.CREATION_DATETIME &&
-        order.CREATION_DATETIME >= todayStart &&
-        order.CREATION_DATETIME <= todayEnd &&
-        countsAsRevenue(order)
-      ) {
-        kpi.revenue_today += toNumber(order.ORDER_FINAL_AMOUNT);
-      }
-
-      return kpi;
-    },
-    {
-      new: 0,
-      preparing: 0,
-      out_for_delivery: 0,
-      ready_for_pickup: 0,
-      delivered: 0,
-      picked_up: 0,
-      rejected: 0,
-      revenue_today: 0,
+  for (const row of statusCounts) {
+    const status = normalizeOrderStatus(row.ORDER_STATUS);
+    if (status in kpi) {
+      kpi[status] = row._count._all;
     }
-  );
+  }
+
+  return kpi;
 }
 
 export async function listOrders(params: ListOrdersParams) {

@@ -109,6 +109,13 @@ Planned or visible-coming-soon areas:
 
 - Low-stock threshold logic is intentionally not implemented in the current product inventory workflow.
 
+## Production Runtime Notes
+
+- `src/lib/prisma.ts` uses one MariaDB connection per serverless instance and caches the Prisma singleton in every environment; do not increase the pool without production evidence.
+- Routine JWT session reads must not query the database. Server authorization still verifies business ownership through `requireBusinessAccess`.
+- Manual production query indexes live in `docs/sql/add_production_query_indexes.sql`. Apply them manually, then run `prisma db pull` and `prisma generate`; do not use `prisma migrate` for this file.
+- Keep polling focused to orders and notifications, pause it in hidden tabs, and do not restore a global dashboard `router.refresh()` interval.
+
 ## Coding Conventions
 
 General:

@@ -306,6 +306,9 @@ model business_order {
 
   @@index([STRIPE_CHECKOUT_SESSION_ID], map: "STRIPE_CHECKOUT_SESSION_ID")
   @@index([STRIPE_PAYMENT_INTENT_ID], map: "STRIPE_PAYMENT_INTENT_ID")
+  @@index([VISITOR_ID, CREATION_DATETIME], map: "idx_business_order_visitor_created")
+  @@index([EMAIL_ADDRESS, CREATION_DATETIME], map: "idx_business_order_email_created")
+  @@index([BUSINESS_ID, ORDER_STATUS, CREATION_DATETIME], map: "idx_business_order_business_status_created")
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
@@ -321,6 +324,8 @@ model business_order_detail {
   PRODUCT_PRICE            Decimal?  @db.Decimal(8, 2)
   QUANTITY_BALANCE         Int?      @default(0)
   QUANTITY__REFUND         Int?      @default(0) @map("QUANTITY:_REFUND")
+
+  @@index([BUSINESS_ORDER_ID], map: "idx_business_order_detail_order")
 }
 
 model business_product {
@@ -565,6 +570,7 @@ model business_notification {
   @@index([CREATION_DATETIME], map: "idx_business_notification_creation_datetime")
   @@index([EXPIRES_AT], map: "idx_business_notification_expires_at")
   @@index([IS_READ], map: "idx_business_notification_is_read")
+  @@index([BUSINESS_ID, IS_READ, CREATION_DATETIME], map: "idx_business_notification_business_read_created")
 }
 
 model customer_order_notification {
