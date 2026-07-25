@@ -21,7 +21,12 @@ export type AdminBusinessCard = {
   shortName: string | null;
   logo: string | null;
   imageUrl: string | null;
+  addressStreet: string | null;
+  addressZip: string | null;
   town: string | null;
+  country: string | null;
+  phone: string | null;
+  email: string | null;
   status: "active" | "inactive";
 };
 
@@ -208,7 +213,12 @@ export async function getOwnedBusinesses(): Promise<AdminBusinessCard[]> {
       shortName: business?.SHORT_NAME || null,
       logo: business?.LOGO || null,
       imageUrl: business?.IMAGE_URL || null,
+      addressStreet: business?.ADDRESS_STREET || null,
+      addressZip: business?.ADDRESS_ZIP?.toString() || null,
       town: business?.ADDRESS_TOWN || null,
+      country: business?.ADDRESS_COUNTRY || null,
+      phone: business?.PHONE_NUMBER || null,
+      email: business?.EMAIL_ADDRESS || null,
       status: business?.STATUS === 1 ? "active" : "inactive",
     };
   });

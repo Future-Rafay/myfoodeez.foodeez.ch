@@ -5,9 +5,11 @@ import {
   PAYMENT_DONE,
   STATUS_CODE_BY_NAME,
   canTransitionOrderStatus,
+  getAllowedOrderActions,
   isStripePaidOrder,
   normalizeOrderStatus,
   normalizeOrderType,
+  type OrderAction,
   type OrderStatusName,
   type OrderType,
 } from "@/lib/orderStatus";
@@ -89,6 +91,7 @@ export type AdminOrderRow = {
   ADDRESS_COUNTRY_CODE: string | null;
   ORDER_STATUS: OrderStatusValue;
   status: NormalizedOrderStatus;
+  allowedActions: OrderAction[];
   ORDER_TYPE: OrderType;
   PAYMENT_MODE: string | null;
   PAYMENT_DONE: number | null;
@@ -208,6 +211,9 @@ function parseDate(value: string | null | undefined, boundary: "start" | "end") 
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
+
+  // ISO timestamps already carry the caller's exact timezone boundary.
+  if (value.includes("T")) return date;
 
   return boundary === "start" ? startOfDay(date) : endOfDay(date);
 }
@@ -341,6 +347,7 @@ async function buildOrderRows(
       ADDRESS_COUNTRY_CODE: order.ADDRESS_COUNTRY_CODE,
       ORDER_STATUS: order.ORDER_STATUS,
       status: normalizeOrderStatus(order.ORDER_STATUS),
+      allowedActions: getAllowedOrderActions(order),
       ORDER_TYPE: normalizeOrderType(order.ORDER_TYPE),
       PAYMENT_MODE: order.PAYMENT_MODE,
       PAYMENT_DONE: order.PAYMENT_DONE,

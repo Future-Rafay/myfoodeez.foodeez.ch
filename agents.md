@@ -81,6 +81,7 @@ Existing API routes:
 - `/api/tags`: legacy tag CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped tag routes below.
 - `/api/dashboard/[businessId]/products`: authenticated selected-business Product list/create route. Supports search, category, status, page, and pageSize filters. Returns paginated product rows with tag/category shaping plus pricing, inventory, weight, and image fields.
 - `/api/dashboard/[businessId]/products/[id]`: authenticated selected-business Product update/delete route. `PATCH` updates full product data, including `COST_PRICE`, `COMPARE_AS_PRICE`, inventory fields, `WEIGHT`, `WEIGHT_UNIT`, `PIC`, or status-only payloads; `DELETE` soft-deletes by status.
+- `/api/pos/context`: authenticated POS bootstrap route. Returns the signed-in user plus only their active businesses and the identity/contact fields needed by the device restaurant chooser and receipts.
 - `/api/dashboard/[businessId]/categories`: authenticated selected-business Category list/create route. Returns category rows with tags and inferred product counts.
 - `/api/dashboard/[businessId]/categories/[id]`: authenticated selected-business Category update/delete route. Maintains `business_product_category_2_tag` assignments and soft-deletes by status.
 - `/api/dashboard/[businessId]/tags`: authenticated selected-business Tag list/create route. Returns tag rows with product/category counts.
@@ -177,6 +178,7 @@ Data and API patterns:
 - Stripe refunds are full-order refunds based on `ORDER_FINAL_AMOUNT`, converted to cents without floating-point multiplication. A `pending` Stripe refund stores `STRIPE_REFUND_STATUS` but keeps `PAYMENT_DONE = 1`; a `succeeded` refund sets `PAYMENT_DONE = 2`. Refund/reject actions are owner-initiated admin actions and must not create admin `business_notification` rows; customer-facing refund/rejection notifications belong in the separate `foodeez.ch` customer app.
 - Dashboard and Orders revenue KPIs use `countsAsRevenue` from `src/lib/orderStatus.ts`; rejected orders, refunded/failed payments, and orders with `STRIPE_REFUND_STATUS` do not count toward revenue totals.
 - Orders list filtering must not apply a default date range. The default route/UI state should show all existing orders unless `dateFrom`/`dateTo` are explicitly supplied.
+- Orders `dateFrom`/`dateTo` accept date-only values for dashboard calendar filters and full ISO timestamps for clients that send exact timezone-aware boundaries; do not round ISO timestamps to the server day.
 - `src/services/orders-management.ts` logs the raw Prisma `where` clause and distinct raw `ORDER_STATUS` values in development mode; keep that logging when working on order data bugs.
 - Order status, rejection, ETA, payment, and refund mutations create idempotent `customer_order_notification` events inside the same database transaction as the order write. Notification ownership uses `VISITORS_ACCOUNT_ID` (sourced from `business_order.VISITOR_ID`). Keep event keys and snapshot metadata compatible with `foodeez.ch/frontend/src/lib/customer-notifications.ts`; the customer app owns listing and read state.
 - The selected-business dashboard recent-orders table uses the same order status mapping through `src/services/admin-data.ts`; `ORDER_STATUS = 4` means rejected.
@@ -277,6 +279,7 @@ Orders-management components:
 - Pickup orders should use the same order detail surface but label `DELIVERY_ET` as estimated pickup time. Delivery orders should continue to label it as estimated delivery time.
 - New preparing orders with `ETA_ACKNOWLEDGED_DATETIME = null` must not trigger a blocking ETA popup. Keep notification/polling behavior, but ETA is edited from the order details modal when needed.
 - Orders management polls the orders API every 30 seconds without resetting selected filters.
+- Orders list rows include server-derived `allowedActions` from `src/lib/orderStatus.ts`; companion clients must render these actions instead of recreating the status transition pipeline. Receipt content is already present on the order row, so there is no separate receipt endpoint.
 - Order status badges should use the shared helper colors: preparing blue, out-for-delivery/ready-for-pickup purple, delivered/picked-up green, rejected red.
 - Dashboard recent-order badges should use the same status mapping as the Orders page through `src/lib/orderStatus.ts`.
 
