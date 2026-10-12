@@ -53,6 +53,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   getAllowedOrderActions,
+  canMarkCashOrderPaid,
   getOrderStatusBadgeColor,
   getOrderStatusLabel,
   getPaymentStatusBadgeColor,
@@ -1006,7 +1007,7 @@ function OrderDetailsModal({
 
   const actions = getAllowedOrderActions(order);
   const isRejected = order.status === "rejected";
-  const showMarkPaid = order.PAYMENT_DONE === 0;
+  const showMarkPaid = canMarkCashOrderPaid(order);
   const canEditEta =
     order.PAYMENT_DONE !== PAYMENT_DONE.REFUNDED &&
     !order.STRIPE_REFUND_STATUS &&

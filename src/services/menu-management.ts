@@ -63,6 +63,7 @@ export type PaginatedMenuProducts = {
 
 export type MenuCardRecordStatus = "active" | "inactive";
 export type MenuCardAvailability = "active" | "scheduled" | "expired";
+export type MenuSalesChannel = "online" | "pos" | "both";
 
 export type MenuCardRow = {
   id: number;
@@ -74,6 +75,7 @@ export type MenuCardRow = {
   repeatWeekly: boolean;
   activeDays: WeekdayKey[];
   isUnlimited: boolean;
+  salesChannel: MenuSalesChannel;
   categoryCount: number;
   productCount: number;
 };
@@ -252,6 +254,7 @@ function normalizeMenuCardValues(values: {
   repeatWeekly?: unknown;
   activeDays?: unknown;
   isUnlimited?: unknown;
+  salesChannel?: unknown;
 }) {
   const title = String(values.title || "").trim();
 
@@ -278,6 +281,11 @@ function normalizeMenuCardValues(values: {
     throw new Error("Select at least one active day.");
   }
 
+  const salesChannel = String(values.salesChannel || "online").toLowerCase();
+  if (!(["online", "pos", "both"] as const).includes(salesChannel as MenuSalesChannel)) {
+    throw new Error("Sales channel must be online, POS, or both.");
+  }
+
   return {
     title,
     validFrom,
@@ -286,6 +294,7 @@ function normalizeMenuCardValues(values: {
     repeatWeekly: repeatWeekly ? 1 : 0,
     activeDaysJson: repeatWeekly ? JSON.stringify(activeDays) : null,
     isUnlimited: isUnlimited ? 1 : 0,
+    salesChannel: salesChannel as MenuSalesChannel,
   };
 }
 
@@ -530,7 +539,19 @@ type RawMenuCard = {
   REPEAT_WEEKLY: number | null;
   ACTIVE_DAYS_JSON: string | null;
   IS_UNLIMITED: number | null;
+  SALES_CHANNEL?: string | null;
 };
+
+async function getMenuCardChannel(cardId: number): Promise<MenuSalesChannel> {
+  const rows = await prisma.$queryRaw<Array<{ SALES_CHANNEL: string | null }>>`
+    SELECT SALES_CHANNEL
+    FROM business_food_menu_card
+    WHERE BUSINESS_FOOD_MENU_CARD_ID = ${cardId}
+    LIMIT 1
+  `;
+  const value = String(rows[0]?.SALES_CHANNEL || "online").toLowerCase();
+  return value === "pos" || value === "both" ? value : "online";
+}
 
 async function getOwnedMenuCard(businessId: number, cardId: number) {
   const card = await prisma.business_food_menu_card.findFirst({
@@ -575,6 +596,10 @@ function mapMenuCardRow(
     repeatWeekly,
     activeDays,
     isUnlimited,
+    salesChannel:
+      card.SALES_CHANNEL === "pos" || card.SALES_CHANNEL === "both"
+        ? card.SALES_CHANNEL
+        : "online",
     categoryCount,
     productCount,
   };
@@ -1387,7 +1412,7 @@ export async function listMenuCards(
   if (!cards.length) return [];
 
   const cardIds = cards.map((card) => card.BUSINESS_FOOD_MENU_CARD_ID);
-  const [details, productIdsByCategory] = await Promise.all([
+  const [details, productIdsByCategory, channelRows] = await Promise.all([
     prisma.business_food_menu_card_detail.findMany({
       where: {
         BUSINESS_FOOD_MENU_CARD_ID: { in: cardIds },
@@ -1395,7 +1420,15 @@ export async function listMenuCards(
       },
     }),
     getBusinessCategoryProductIdMap(businessId),
+    prisma.$queryRaw<Array<{ BUSINESS_FOOD_MENU_CARD_ID: number; SALES_CHANNEL: string | null }>>`
+      SELECT BUSINESS_FOOD_MENU_CARD_ID, SALES_CHANNEL
+      FROM business_food_menu_card
+      WHERE BUSINESS_ID = ${businessId}
+    `,
   ]);
+  const channels = new Map(
+    channelRows.map((row) => [row.BUSINESS_FOOD_MENU_CARD_ID, row.SALES_CHANNEL])
+  );
   const countsByCard = new Map<
     number,
     { categoryIds: Set<number>; productIds: Set<number> }
@@ -1427,7 +1460,7 @@ export async function listMenuCards(
     const counts = countsByCard.get(card.BUSINESS_FOOD_MENU_CARD_ID);
 
     return mapMenuCardRow(
-      card,
+      { ...card, SALES_CHANNEL: channels.get(card.BUSINESS_FOOD_MENU_CARD_ID) },
       counts?.categoryIds.size || 0,
       counts?.productIds.size || 0
     );
@@ -1447,6 +1480,7 @@ async function getMenuCardRowWithCounts(businessId: number, cardId: number) {
 async function duplicateMenuCard(businessId: number, sourceCardId: number) {
   const source = await getOwnedMenuCard(businessId, sourceCardId);
   const sourceDetails = await getActiveMenuCardDetails(sourceCardId);
+  const salesChannel = await getMenuCardChannel(sourceCardId);
   const title = `Copy of ${source.TITLE || `Menu #${sourceCardId}`}`.slice(0, 45);
 
   const createdId = await prisma.$transaction(async (tx) => {
@@ -1463,6 +1497,12 @@ async function duplicateMenuCard(businessId: number, sourceCardId: number) {
         IS_UNLIMITED: source.IS_UNLIMITED === 1 ? 1 : 0,
       },
     });
+
+    await tx.$executeRaw`
+      UPDATE business_food_menu_card
+      SET SALES_CHANNEL = ${salesChannel}
+      WHERE BUSINESS_FOOD_MENU_CARD_ID = ${created.BUSINESS_FOOD_MENU_CARD_ID}
+    `;
 
     const detailData = sourceDetails
       .filter((detail) => detail.BUSINESS_PRODUCT_CATEGORY_ID !== null)
@@ -1495,6 +1535,7 @@ export async function createMenuCard(
     repeatWeekly?: unknown;
     activeDays?: unknown;
     isUnlimited?: unknown;
+    salesChannel?: unknown;
     duplicateFromId?: unknown;
   }
 ) {
@@ -1506,18 +1547,26 @@ export async function createMenuCard(
   }
 
   const normalized = normalizeMenuCardValues(values);
-  const created = await prisma.business_food_menu_card.create({
-    data: {
-      CREATION_DATETIME: new Date(),
-      BUSINESS_ID: businessId,
-      TITLE: normalized.title,
-      VALID_FROM: normalized.validFrom,
-      VALID_TO: normalized.validTo,
-      STATUS: normalized.status,
-      REPEAT_WEEKLY: normalized.repeatWeekly,
-      ACTIVE_DAYS_JSON: normalized.activeDaysJson,
-      IS_UNLIMITED: normalized.isUnlimited,
-    },
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.business_food_menu_card.create({
+      data: {
+        CREATION_DATETIME: new Date(),
+        BUSINESS_ID: businessId,
+        TITLE: normalized.title,
+        VALID_FROM: normalized.validFrom,
+        VALID_TO: normalized.validTo,
+        STATUS: normalized.status,
+        REPEAT_WEEKLY: normalized.repeatWeekly,
+        ACTIVE_DAYS_JSON: normalized.activeDaysJson,
+        IS_UNLIMITED: normalized.isUnlimited,
+      },
+    });
+    await tx.$executeRaw`
+      UPDATE business_food_menu_card
+      SET SALES_CHANNEL = ${normalized.salesChannel}
+      WHERE BUSINESS_FOOD_MENU_CARD_ID = ${row.BUSINESS_FOOD_MENU_CARD_ID}
+    `;
+    return row;
   });
 
   return getMenuCardRowWithCounts(
@@ -1537,6 +1586,7 @@ export async function updateMenuCard(
     repeatWeekly?: unknown;
     activeDays?: unknown;
     isUnlimited?: unknown;
+    salesChannel?: unknown;
   }
 ) {
   await requireMenuBusinessAccess(businessId);
@@ -1544,17 +1594,24 @@ export async function updateMenuCard(
 
   const normalized = normalizeMenuCardValues(values);
 
-  await prisma.business_food_menu_card.update({
-    where: { BUSINESS_FOOD_MENU_CARD_ID: cardId },
-    data: {
-      TITLE: normalized.title,
-      VALID_FROM: normalized.validFrom,
-      VALID_TO: normalized.validTo,
-      STATUS: normalized.status,
-      REPEAT_WEEKLY: normalized.repeatWeekly,
-      ACTIVE_DAYS_JSON: normalized.activeDaysJson,
-      IS_UNLIMITED: normalized.isUnlimited,
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.business_food_menu_card.update({
+      where: { BUSINESS_FOOD_MENU_CARD_ID: cardId },
+      data: {
+        TITLE: normalized.title,
+        VALID_FROM: normalized.validFrom,
+        VALID_TO: normalized.validTo,
+        STATUS: normalized.status,
+        REPEAT_WEEKLY: normalized.repeatWeekly,
+        ACTIVE_DAYS_JSON: normalized.activeDaysJson,
+        IS_UNLIMITED: normalized.isUnlimited,
+      },
+    });
+    await tx.$executeRaw`
+      UPDATE business_food_menu_card
+      SET SALES_CHANNEL = ${normalized.salesChannel}
+      WHERE BUSINESS_FOOD_MENU_CARD_ID = ${cardId}
+    `;
   });
 
   return getMenuCardRowWithCounts(businessId, cardId);

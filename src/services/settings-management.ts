@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { parseDeliveryZones, type DeliveryZone } from "@/lib/fulfillment";
+import { isDeliveryEnabled, parseDeliveryZones, type DeliveryZone } from "@/lib/fulfillment";
 import { requireBusinessAccess } from "@/services/admin-data";
 
 export type BusinessSettingsRow = {
@@ -12,6 +12,8 @@ export type FulfillmentSettingsPayload = {
   deliveryEnabled: boolean;
   deliveryZones: DeliveryZone[];
   pickupEnabled: boolean;
+  cashOnDeliveryEnabled: boolean;
+  cashOnPickupEnabled: boolean;
   pickupInstructions: string;
   defaultPickupPrepMinutes: number;
   defaultDeliveryPrepMinutes: number;
@@ -150,6 +152,14 @@ function normalizeFulfillmentPayload(
     throw new Error("pickupEnabled must be a boolean.");
   }
 
+  if (typeof payload.cashOnDeliveryEnabled !== "boolean") {
+    throw new Error("cashOnDeliveryEnabled must be a boolean.");
+  }
+
+  if (typeof payload.cashOnPickupEnabled !== "boolean") {
+    throw new Error("cashOnPickupEnabled must be a boolean.");
+  }
+
   if (typeof payload.pickupInstructions !== "string") {
     throw new Error("pickupInstructions must be a string.");
   }
@@ -158,6 +168,8 @@ function normalizeFulfillmentPayload(
     deliveryEnabled: payload.deliveryEnabled,
     deliveryZones: normalizeDeliveryZones(payload.deliveryZones),
     pickupEnabled: payload.pickupEnabled,
+    cashOnDeliveryEnabled: payload.cashOnDeliveryEnabled,
+    cashOnPickupEnabled: payload.cashOnPickupEnabled,
     pickupInstructions: payload.pickupInstructions.trim(),
     defaultPickupPrepMinutes: toPrepMinutes(
       payload.defaultPickupPrepMinutes,
@@ -182,15 +194,27 @@ function mapFulfillmentSettings(
     PICKUP_INSTRUCTIONS: string | null;
     DEFAULT_PICKUP_PREP_MINUTES: number | null;
     DEFAULT_DELIVERY_PREP_MINUTES: number | null;
+  } | null,
+  cashSettings?: {
+    CASH_ON_DELIVERY_ENABLED: number | null;
+    CASH_ON_PICKUP_ENABLED: number | null;
   } | null
 ): FulfillmentSettingsRow {
   return {
     id: settings?.BUSINESS_SETTINGS_ID ?? null,
     businessId,
     legacyDeliveryAreas: settings?.DELIVERY_RANGE_ZIP_CODES || "",
-    deliveryEnabled: toBoolean(settings?.DELIVERY_ENABLED, true),
+    deliveryEnabled: isDeliveryEnabled(settings),
     deliveryZones: parseDeliveryZones(settings),
     pickupEnabled: toBoolean(settings?.PICKUP_ENABLED, false),
+    cashOnDeliveryEnabled: toBoolean(
+      cashSettings?.CASH_ON_DELIVERY_ENABLED,
+      false
+    ),
+    cashOnPickupEnabled: toBoolean(
+      cashSettings?.CASH_ON_PICKUP_ENABLED,
+      false
+    ),
     pickupInstructions: settings?.PICKUP_INSTRUCTIONS || "",
     defaultPickupPrepMinutes: settings?.DEFAULT_PICKUP_PREP_MINUTES ?? 20,
     defaultDeliveryPrepMinutes: settings?.DEFAULT_DELIVERY_PREP_MINUTES ?? 45,
@@ -223,11 +247,24 @@ export async function getFulfillmentSettings(
 ): Promise<FulfillmentSettingsRow> {
   await requireBusinessAccess(businessId);
 
-  const settings = await prisma.business_settings.findUnique({
-    where: { BUSINESS_ID: businessId },
-  });
+  const [settings, cashSettings] = await Promise.all([
+    prisma.business_settings.findUnique({
+      where: { BUSINESS_ID: businessId },
+    }),
+    prisma.$queryRaw<
+      Array<{
+        CASH_ON_DELIVERY_ENABLED: number | null;
+        CASH_ON_PICKUP_ENABLED: number | null;
+      }>
+    >`
+      SELECT CASH_ON_DELIVERY_ENABLED, CASH_ON_PICKUP_ENABLED
+      FROM business_settings
+      WHERE BUSINESS_ID = ${businessId}
+      LIMIT 1
+    `,
+  ]);
 
-  return mapFulfillmentSettings(businessId, settings);
+  return mapFulfillmentSettings(businessId, settings, cashSettings[0]);
 }
 
 export async function updateFulfillmentSettings(
@@ -238,31 +275,45 @@ export async function updateFulfillmentSettings(
 
   const normalizedPayload = normalizeFulfillmentPayload(payload);
 
-  const settings = await prisma.business_settings.upsert({
-    where: { BUSINESS_ID: businessId },
-    create: {
-      BUSINESS_ID: businessId,
-      DELIVERY_ENABLED: normalizedPayload.deliveryEnabled ? 1 : 0,
-      DELIVERY_ZONES_JSON: JSON.stringify(normalizedPayload.deliveryZones),
-      PICKUP_ENABLED: normalizedPayload.pickupEnabled ? 1 : 0,
-      PICKUP_INSTRUCTIONS: normalizedPayload.pickupInstructions,
-      DEFAULT_PICKUP_PREP_MINUTES: normalizedPayload.defaultPickupPrepMinutes,
-      DEFAULT_DELIVERY_PREP_MINUTES:
-        normalizedPayload.defaultDeliveryPrepMinutes,
-    },
-    update: {
-      DELIVERY_ENABLED: normalizedPayload.deliveryEnabled ? 1 : 0,
-      DELIVERY_ZONES_JSON: JSON.stringify(normalizedPayload.deliveryZones),
-      PICKUP_ENABLED: normalizedPayload.pickupEnabled ? 1 : 0,
-      PICKUP_INSTRUCTIONS: normalizedPayload.pickupInstructions,
-      DEFAULT_PICKUP_PREP_MINUTES: normalizedPayload.defaultPickupPrepMinutes,
-      DEFAULT_DELIVERY_PREP_MINUTES:
-        normalizedPayload.defaultDeliveryPrepMinutes,
-      LAST_UPDATE_DATETIME: new Date(),
-    },
+  const settings = await prisma.$transaction(async (tx) => {
+    const saved = await tx.business_settings.upsert({
+      where: { BUSINESS_ID: businessId },
+      create: {
+        BUSINESS_ID: businessId,
+        DELIVERY_ENABLED: normalizedPayload.deliveryEnabled ? 1 : 0,
+        DELIVERY_ZONES_JSON: JSON.stringify(normalizedPayload.deliveryZones),
+        PICKUP_ENABLED: normalizedPayload.pickupEnabled ? 1 : 0,
+        PICKUP_INSTRUCTIONS: normalizedPayload.pickupInstructions,
+        DEFAULT_PICKUP_PREP_MINUTES: normalizedPayload.defaultPickupPrepMinutes,
+        DEFAULT_DELIVERY_PREP_MINUTES:
+          normalizedPayload.defaultDeliveryPrepMinutes,
+      },
+      update: {
+        DELIVERY_ENABLED: normalizedPayload.deliveryEnabled ? 1 : 0,
+        DELIVERY_ZONES_JSON: JSON.stringify(normalizedPayload.deliveryZones),
+        PICKUP_ENABLED: normalizedPayload.pickupEnabled ? 1 : 0,
+        PICKUP_INSTRUCTIONS: normalizedPayload.pickupInstructions,
+        DEFAULT_PICKUP_PREP_MINUTES: normalizedPayload.defaultPickupPrepMinutes,
+        DEFAULT_DELIVERY_PREP_MINUTES:
+          normalizedPayload.defaultDeliveryPrepMinutes,
+        LAST_UPDATE_DATETIME: new Date(),
+      },
+    });
+
+    await tx.$executeRaw`
+      UPDATE business_settings
+      SET CASH_ON_DELIVERY_ENABLED = ${normalizedPayload.cashOnDeliveryEnabled ? 1 : 0},
+          CASH_ON_PICKUP_ENABLED = ${normalizedPayload.cashOnPickupEnabled ? 1 : 0}
+      WHERE BUSINESS_ID = ${businessId}
+    `;
+
+    return saved;
   });
 
-  return mapFulfillmentSettings(businessId, settings);
+  return mapFulfillmentSettings(businessId, settings, {
+    CASH_ON_DELIVERY_ENABLED: normalizedPayload.cashOnDeliveryEnabled ? 1 : 0,
+    CASH_ON_PICKUP_ENABLED: normalizedPayload.cashOnPickupEnabled ? 1 : 0,
+  });
 }
 
 export async function getBusinessSettings(
@@ -296,6 +347,7 @@ export async function upsertBusinessSettings(
     create: {
       BUSINESS_ID: businessId,
       DELIVERY_RANGE_ZIP_CODES: normalizedDeliveryAreas,
+      DELIVERY_ENABLED: 0,
     },
     update: {
       DELIVERY_RANGE_ZIP_CODES: normalizedDeliveryAreas,

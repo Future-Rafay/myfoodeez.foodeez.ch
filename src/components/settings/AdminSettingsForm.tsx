@@ -166,6 +166,8 @@ export default function AdminSettingsForm({
             deliveryEnabled: fulfillment.deliveryEnabled,
             deliveryZones: fulfillment.deliveryZones,
             pickupEnabled: fulfillment.pickupEnabled,
+            cashOnDeliveryEnabled: fulfillment.cashOnDeliveryEnabled,
+            cashOnPickupEnabled: fulfillment.cashOnPickupEnabled,
             pickupInstructions: fulfillment.pickupInstructions,
             defaultPickupPrepMinutes: fulfillment.defaultPickupPrepMinutes,
             defaultDeliveryPrepMinutes:
@@ -611,6 +613,59 @@ export default function AdminSettingsForm({
                   }
                   rows={4}
                   placeholder="Example: Please come to the counter and show your order number."
+                />
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4 border-t border-gray-100 pt-6">
+            <div>
+              <h3 className="text-base font-semibold text-gray-950">
+                Customer payment methods
+              </h3>
+              <p className="mt-1 text-sm text-gray-500">
+                Card is always available. Enable cash only where your team can
+                accept it.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="flex min-h-20 items-center justify-between rounded-lg border border-gray-200 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">Card</p>
+                  <p className="text-xs text-gray-500">Always enabled</p>
+                </div>
+                <Switch checked disabled aria-label="Card payments enabled" />
+              </div>
+              <div className="flex min-h-20 items-center justify-between gap-3 rounded-lg border border-gray-200 p-4">
+                <Label htmlFor="cashOnDeliveryEnabled" className="cursor-pointer">
+                  <span className="block text-sm font-semibold text-gray-900">Cash on Delivery</span>
+                  <span className="block text-xs font-normal text-gray-500">Delivery orders only</span>
+                </Label>
+                <Switch
+                  id="cashOnDeliveryEnabled"
+                  checked={fulfillment.cashOnDeliveryEnabled}
+                  onCheckedChange={(checked) =>
+                    setFulfillment((current) => ({
+                      ...current,
+                      cashOnDeliveryEnabled: checked,
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex min-h-20 items-center justify-between gap-3 rounded-lg border border-gray-200 p-4">
+                <Label htmlFor="cashOnPickupEnabled" className="cursor-pointer">
+                  <span className="block text-sm font-semibold text-gray-900">Cash on Pickup</span>
+                  <span className="block text-xs font-normal text-gray-500">Pickup orders only</span>
+                </Label>
+                <Switch
+                  id="cashOnPickupEnabled"
+                  checked={fulfillment.cashOnPickupEnabled}
+                  onCheckedChange={(checked) =>
+                    setFulfillment((current) => ({
+                      ...current,
+                      cashOnPickupEnabled: checked,
+                    }))
+                  }
                 />
               </div>
             </div>

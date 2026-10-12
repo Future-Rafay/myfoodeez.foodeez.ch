@@ -253,6 +253,7 @@ model business_food_menu_card {
   REPEAT_WEEKLY              Int       @default(0) @db.TinyInt
   ACTIVE_DAYS_JSON           String?   @db.LongText
   IS_UNLIMITED               Int       @default(0) @db.TinyInt
+  SALES_CHANNEL              String    @default("online") @db.VarChar(20)
 }
 
 model business_food_menu_card_detail {
@@ -265,7 +266,7 @@ model business_food_menu_card_detail {
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model business_order {
-  BUSINESS_ORDER_ID          Int       @id
+  BUSINESS_ORDER_ID          Int       @id @default(autoincrement())
   CREATION_DATETIME          DateTime? @db.DateTime(0)
   BUSINESS_ID                Int?
   VISITOR_ID                 Int?      @default(0)
@@ -303,6 +304,9 @@ model business_order {
   STRIPE_REFUND_STATUS       String?   @db.VarChar(50)
   STRIPE_REFUNDED_DATETIME   DateTime? @db.DateTime(0)
   ORDER_NUMBER               String?   @unique(map: "business_order_ORDER_NUMBER_unique") @db.VarChar(20)
+  POS_REQUEST_ID              String?   @unique(map: "business_order_POS_REQUEST_ID_unique") @db.VarChar(64)
+  CHECKOUT_REQUEST_ID         String?   @unique(map: "business_order_CHECKOUT_REQUEST_ID_unique") @db.VarChar(64)
+  INVENTORY_RELEASED_DATETIME DateTime? @db.DateTime(0)
 
   @@index([STRIPE_CHECKOUT_SESSION_ID], map: "STRIPE_CHECKOUT_SESSION_ID")
   @@index([STRIPE_PAYMENT_INTENT_ID], map: "STRIPE_PAYMENT_INTENT_ID")
@@ -313,7 +317,7 @@ model business_order {
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model business_order_detail {
-  BUSINESS_ORDER_DETAIL_ID Int       @id
+  BUSINESS_ORDER_DETAIL_ID Int       @id @default(autoincrement())
   CREATION_DATETIME        DateTime? @db.DateTime(0)
   BUSINESS_ORDER_ID        Int?
   BUSINESS_PRODUCT_ID      Int?
@@ -326,6 +330,15 @@ model business_order_detail {
   QUANTITY__REFUND         Int?      @default(0) @map("QUANTITY:_REFUND")
 
   @@index([BUSINESS_ORDER_ID], map: "idx_business_order_detail_order")
+}
+
+model checkout_rate_limit {
+  RATE_LIMIT_KEY          String   @id @db.Char(64)
+  WINDOW_STARTED_AT       DateTime @db.DateTime(0)
+  REQUEST_COUNT           Int      @default(1)
+  LAST_REQUEST_DATETIME   DateTime @db.DateTime(0)
+
+  @@index([LAST_REQUEST_DATETIME], map: "idx_checkout_rate_limit_last_request")
 }
 
 model business_product {
@@ -544,12 +557,14 @@ model business_settings {
   DELIVERY_RANGE_ZIP_CODES      String?  @db.Text
   CREATION_DATETIME             DateTime @default(now()) @db.DateTime(0)
   LAST_UPDATE_DATETIME          DateTime @default(now()) @db.DateTime(0)
-  DELIVERY_ENABLED              Int?     @default(1) @db.TinyInt
+  DELIVERY_ENABLED              Int?     @default(0) @db.TinyInt
   DELIVERY_ZONES_JSON           String?  @db.LongText
   PICKUP_ENABLED                Int?     @default(0) @db.TinyInt
   PICKUP_INSTRUCTIONS           String?  @db.Text
   DEFAULT_PICKUP_PREP_MINUTES   Int?     @default(20)
   DEFAULT_DELIVERY_PREP_MINUTES Int?     @default(45)
+  CASH_ON_DELIVERY_ENABLED      Int      @default(0) @db.TinyInt
+  CASH_ON_PICKUP_ENABLED        Int      @default(0) @db.TinyInt
   business                      business @relation(fields: [BUSINESS_ID], references: [BUSINESS_ID], onDelete: Cascade, map: "BusinessSettings_businessId_fkey")
 }
 

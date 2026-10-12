@@ -31,12 +31,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   MenuCardAvailability,
   MenuCardRecordStatus,
   MenuCardRow,
+  MenuSalesChannel,
   WeekdayKey,
 } from "@/services/menu-management";
 
@@ -54,6 +62,7 @@ type MenuCardFormValues = {
   isUnlimited: boolean;
   repeatWeekly: boolean;
   activeDays: WeekdayKey[];
+  salesChannel: MenuSalesChannel;
 };
 const weekdayLabels: Record<WeekdayKey, string> = {
   monday: "Mon",
@@ -122,6 +131,7 @@ export default function MenuCardsManagement({
       isUnlimited: card.isUnlimited,
       repeatWeekly: card.repeatWeekly,
       activeDays: card.activeDays.length ? card.activeDays : [...weekdayKeys],
+      salesChannel: card.salesChannel,
     });
     setError("");
     setFormOpen(true);
@@ -282,6 +292,13 @@ export default function MenuCardsManagement({
                     </h3>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <MenuCardStatusBadge card={card} />
+                      <Badge variant="outline">
+                        {card.salesChannel === "both"
+                          ? "Online + POS"
+                          : card.salesChannel === "pos"
+                            ? "POS only"
+                            : "Online only"}
+                      </Badge>
                       {card.isUnlimited && (
                         <Badge
                           variant="outline"
@@ -379,6 +396,31 @@ export default function MenuCardsManagement({
                 required
                 disabled={saving}
               />
+            </div>
+            <div>
+              <Label htmlFor="sales-channel">Sales channel</Label>
+              <Select
+                value={formValues.salesChannel}
+                onValueChange={(value) =>
+                  setFormValues((current) => ({
+                    ...current,
+                    salesChannel: value as MenuSalesChannel,
+                  }))
+                }
+                disabled={saving}
+              >
+                <SelectTrigger id="sales-channel" className="mt-2 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="online">Online only</SelectItem>
+                  <SelectItem value="pos">POS only</SelectItem>
+                  <SelectItem value="both">Online and POS</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="mt-2 text-sm text-gray-500">
+                Controls where this menu is available when its schedule is active.
+              </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -679,6 +721,7 @@ function getDefaultFormValues(): MenuCardFormValues {
     isUnlimited: false,
     repeatWeekly: false,
     activeDays: [...weekdayKeys],
+    salesChannel: "online",
   };
 }
 

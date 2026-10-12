@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { isDeliveryEnabled } from "@/lib/fulfillment";
 
 type RouteContext = {
   params: Promise<{ businessId: string }>;
@@ -30,7 +31,7 @@ export async function GET(_req: Request, { params }: RouteContext) {
   });
 
   return NextResponse.json({
-    deliveryEnabled: settings?.DELIVERY_ENABLED !== 0,
+    deliveryEnabled: isDeliveryEnabled(settings),
     pickupEnabled: settings?.PICKUP_ENABLED === 1,
     pickupInstructions: settings?.PICKUP_INSTRUCTIONS || "",
     defaultPickupPrepMinutes: settings?.DEFAULT_PICKUP_PREP_MINUTES ?? 20,

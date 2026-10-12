@@ -103,8 +103,7 @@ Existing API routes:
 - `/api/dashboard/[businessId]/settings/fulfillment`: authenticated selected-business fulfillment settings route. `GET` returns parsed `DELIVERY_ZONES_JSON` plus pickup/default prep settings. `PATCH` validates owner access, normalizes postal codes, validates CHF prices/free-delivery thresholds, stores zones as JSON text, and updates `LAST_UPDATE_DATETIME`.
 - `/api/businesses/[businessId]/fulfillment-options`: public customer-facing fulfillment options route. Returns delivery/pickup enabled flags, pickup instructions, and default prep minutes.
 - `/api/businesses/[businessId]/delivery-quote`: public customer-facing delivery quote route. Uses `src/lib/fulfillment.ts` to match exact postal codes and wildcard prefix postal codes from `DELIVERY_ZONES_JSON`.
-- `/api/businesses/[businessId]/orders`: public customer-facing order creation route. Computes product subtotal server-side from active business products, validates delivery quotes for delivery orders, stores pickup orders without delivery fees, and writes `business_order` plus detail rows.
-- `/api/businesses/[businessId]/orders` also reserves tracked product inventory inside the same Prisma transaction as order/detail creation. If `TRACK_INVENTORY = 1` and `INVENTORY_AVAILABLE` is below the requested quantity, it rejects creation with `Only X left in stock for PRODUCT_TITLE`. New orders save `ORDER_NUMBER` as the official display number in `FDZ.000001` format after the numeric `BUSINESS_ORDER_ID` is known, and responses include `orderNumber`/`ORDER_NUMBER`.
+- `/api/businesses/[businessId]/orders`: retired POST route returning `410`. It had no in-repository callers and accepted caller-supplied payment state. Customer checkout and payment verification belong to `foodeez.ch`.
 
 Planned or visible-coming-soon areas:
 
@@ -163,6 +162,7 @@ Data and API patterns:
 - Order inventory writes live in `src/lib/inventory.ts`. On order creation, tracked products reserve stock by decrementing `INVENTORY_AVAILABLE` and incrementing `INVENTORY_COMMITED` by `ORDER_QUANTITY`; untracked products do not change stock.
 - Admin order status updates call inventory helpers inside the same Prisma transaction as the `business_order` status update. Transitioning into delivered (`ORDER_STATUS = 3`) or picked up (`ORDER_STATUS = 6`) finalizes tracked stock by decrementing `INVENTORY_COMMITED` and `INVENTORY_ON_HAND`, while leaving `INVENTORY_AVAILABLE` unchanged from reservation; it does not automatically mark unpaid cash orders paid. Transitioning into rejected (`ORDER_STATUS = 4`) releases tracked stock by incrementing `INVENTORY_AVAILABLE` and decrementing `INVENTORY_COMMITED`, without changing `INVENTORY_ON_HAND`.
 - Inventory lifecycle updates rely on the existing status transition guard in `src/lib/orderStatus.ts` to avoid double finalization or double release. Helper math clamps counts so legacy/manual data cannot push `INVENTORY_ON_HAND` or `INVENTORY_COMMITED` below zero.
+- Inventory release also claims `business_order.INVENTORY_RELEASED_DATETIME`; a rejected order and an expired Stripe checkout therefore cannot release the same reservation twice, and finalized inventory skips orders whose reservation was already released.
 - Product weight uses `WEIGHT` plus `WEIGHT_UNIT`; allowed units in the admin form are `gm`, `kg`, `ml`, and `l`, defaulting to `0 gm`.
 - Orders management uses API routes from the `AdminOrdersPage` client island because it needs filter/search pagination and modal-driven status updates.
 - Current order status mapping is `preparing = 1`, `out_for_delivery = 2`, `delivered = 3`, `rejected = 4`, `ready_for_pickup = 5`, and `picked_up = 6`. Valid delivery transitions are `preparing -> out_for_delivery`, `out_for_delivery -> delivered`, and `preparing -> rejected`. Valid pickup transitions are `preparing -> ready_for_pickup`, `ready_for_pickup -> picked_up`, and `preparing -> rejected`.
@@ -265,11 +265,24 @@ Product-management components:
 Settings components:
 
 - `AdminSettingsForm` is the selected-business settings client island. It edits fulfillment settings through `/api/dashboard/[businessId]/settings/fulfillment`, including delivery enabled, delivery zones, pickup enabled, prep-time defaults, and pickup instructions. It also preserves the legacy comma-separated delivery areas editor through `/api/dashboard/[businessId]/settings` and renders read-only business name/email fields.
+- The same fulfillment settings workflow owns restaurant-level Cash on Delivery and Cash on Pickup flags. Card remains always enabled; both cash flags default off.
+- Delivery is opt-in: missing or null `DELIVERY_ENABLED` reads as off, and new `business_settings` rows default to `0`. Apply the shared database default migration `20261013020000_default_delivery_disabled`, then the null-row backfill `20261013021000_backfill_null_delivery_disabled`; existing `1` values are preserved.
+
+POS components:
+
+- The slim web POS lives at `/dashboard/[businessId]/pos`; its catalog and order endpoints are `/api/dashboard/[businessId]/pos/catalog` and `/api/dashboard/[businessId]/pos/orders`.
+- POS catalog data reuses active menu-card/category/product relationships and includes only menu cards with `SALES_CHANNEL` set to `pos` or `both`. Do not create a parallel POS catalog.
+- POS orders use terminal `web-pos`, pickup/picked-up status, paid cash or external-terminal card, zero delivery fee, and request-id idempotency. Immediate POS sales atomically decrement tracked available and on-hand stock through the shared inventory helper within the order transaction; regular orders still use reserve/finalize. Browser print is the only receipt-printer integration.
+- POS catalog reads require owner access. External card-terminal sales require the operator to confirm that payment completed; browser full screen does not lock the device.
+- POS daily summaries send the selected browser-local day's explicit ISO start/end timestamps; the service also retains date-only parsing for older callers. Do not derive the operator's date with `toISOString().slice(0, 10)`.
+- `business_order.BUSINESS_ORDER_ID` and `business_order_detail.BUSINESS_ORDER_DETAIL_ID` are database auto-increment keys. Order creators must omit both IDs, use the returned order ID to generate `ORDER_NUMBER`, and never calculate IDs with `MAX(id) + 1`.
 
 Orders-management components:
 
 - `AdminOrdersPage` is the Shopify-style Orders UI for `/dashboard/[businessId]/orders`. It owns client-side filter state, pagination state, row action dropdowns, payment/ETA updates, and the order detail modal.
 - Orders list, status changes, ETA edits, and payment confirmation are fetched through `/api/dashboard/[businessId]/orders`, `/api/dashboard/[businessId]/orders/[orderId]/status`, `/api/dashboard/[businessId]/orders/[orderId]/eta`, and `/api/dashboard/[businessId]/orders/[orderId]/payment`.
+- Manual payment confirmation accepts only pending cash orders. Stripe payments are verified on the customer site. Full Stripe refund requests use a stable per-order idempotency key.
+- Pending or failed card orders have no fulfillment actions; the status API also rejects transitions until card payment is confirmed.
 - Orders list defaults to all dates so the table does not hide existing historical orders; users can still filter to Today, Last 7 days, or Custom.
 - Orders table columns are Order #, Customer with phone below, Order type, Items, Total from `FINAL_AMOUNT`, Payment status badge, Status badge, ETA, Ordered at, and Actions. Do not show `PAYMENT_MODE` in the table.
 - Orders table and details must show the official display order number (`ORDER_NUMBER`, falling back to `FDZ.` plus `BUSINESS_ORDER_ID` padded to 6 digits), not raw `#BUSINESS_ORDER_ID`.
@@ -297,6 +310,9 @@ Orders-management components:
 - For Menu Card detail changes, preserve the explicit Save Changes workflow. Do not make Add, Remove, or drag reorder immediately persist unless the UX is intentionally changed everywhere.
 - For Menu Card customer visibility, keep admin status and view SQL in sync. Disabled menu cards should not appear through `business_food_menu_card_view`, `business_food_menu_card_detail_view`, or `business_having_active_menu_card_view`.
 - For selected-business Settings behavior, prefer extending `src/services/settings-management.ts` and `AdminSettingsForm`.
+- New shared Foodeez schema fields are introduced by the idempotent manual migration `prisma/migrations/20261012000000_add_pos_channels_and_cash_settings/migration.sql`; keep the customer and admin Prisma schemas in parity and do not apply it automatically.
+- Atomic order IDs are introduced by the idempotent manual migration `prisma/migrations/20261013000000_make_order_ids_auto_increment/migration.sql`; apply it to the same shared database before deploying code that omits order/detail IDs.
+- Stripe inventory-release tracking and persistent guest-checkout throttling are introduced by `prisma/migrations/20261013010000_add_checkout_inventory_release_and_rate_limit/migration.sql`; keep both repository schemas in parity.
 - For Orders management changes, prefer extending `src/services/orders-management.ts` so the page UI and API routes share the same status mapping, filtering, authorization, and transition rules.
 - For order lifecycle work, keep status constants, labels, badge colors, and transition rules in `src/lib/orderStatus.ts`; do not duplicate raw status-number maps in components.
 - For fulfillment settings, preserve legacy ZIP-code behavior while adding delivery zones and pickup options. Treat `DELIVERY_ZONES_JSON` as app-owned JSON text, not as a normalized relational model unless a future migration explicitly changes that.
@@ -306,3 +322,4 @@ Orders-management components:
 - When adding product category behavior, remember that categories are not directly linked from `business_product`; check `prisma/schema.prisma` and the current tag-inference approach before changing assumptions.
 - For media changes, use the existing upload utilities and S3 storage helpers.
 - For new dashboard sections, follow the selected-business route structure under `src/app/dashboard/[businessId]`.
+- Run focused regression coverage with `npm.cmd test`; it includes owner/business isolation, inventory reservation/finalization/release, request-id schema contracts, POS input/receipt behavior, and browser-local date boundaries.

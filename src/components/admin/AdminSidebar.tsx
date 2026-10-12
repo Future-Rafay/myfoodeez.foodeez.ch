@@ -10,6 +10,7 @@ import {
   FolderKanban,
   LayoutDashboard,
   LogOut,
+  MonitorSmartphone,
   ReceiptText,
   Settings,
   Store,
@@ -30,6 +31,11 @@ export const adminNavItems = [
     label: "Orders",
     href: "/orders",
     icon: ReceiptText,
+  },
+  {
+    label: "POS",
+    href: "/pos",
+    icon: MonitorSmartphone,
   },
 ];
 

@@ -64,6 +64,23 @@ export function normalizeOrderStatus(value: unknown): OrderStatusName {
   return "preparing";
 }
 
+export function canMarkCashOrderPaid(order: OrderLike) {
+  return (
+    order.PAYMENT_DONE === PAYMENT_DONE.PENDING &&
+    ["cash", "cash_on_delivery", "pay_at_pickup"].includes(
+      (order.PAYMENT_MODE || "").toLowerCase()
+    ) &&
+    normalizeOrderStatus(order.ORDER_STATUS) !== "rejected"
+  );
+}
+
+export function isUnpaidCardOrder(order: OrderLike) {
+  return (
+    ["stripe", "card"].includes((order.PAYMENT_MODE || "").toLowerCase()) &&
+    order.PAYMENT_DONE !== PAYMENT_DONE.PAID
+  );
+}
+
 export function getOrderStatusLabel(order: OrderLike) {
   const status = normalizeOrderStatus(order.ORDER_STATUS);
   const orderType = normalizeOrderType(order.ORDER_TYPE);
@@ -121,6 +138,7 @@ export function canTransitionOrderStatus(
 }
 
 export function getAllowedOrderActions(order: OrderLike): OrderAction[] {
+  if (isUnpaidCardOrder(order)) return [];
   const status = normalizeOrderStatus(order.ORDER_STATUS);
   const orderType = normalizeOrderType(order.ORDER_TYPE);
 

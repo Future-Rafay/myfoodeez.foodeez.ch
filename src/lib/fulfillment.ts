@@ -25,6 +25,10 @@ type DeliverySettings = {
   DELIVERY_ZONES_JSON?: string | null;
 };
 
+export function isDeliveryEnabled(settings?: DeliverySettings | null) {
+  return settings?.DELIVERY_ENABLED === 1 || settings?.DELIVERY_ENABLED === true;
+}
+
 function toNumber(value: unknown, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -98,7 +102,7 @@ export async function calculateDeliveryQuote({
     },
   });
 
-  if (!settings || settings.DELIVERY_ENABLED === 0) {
+  if (!isDeliveryEnabled(settings)) {
     return {
       available: false,
       reason: "Delivery is not available for this restaurant.",

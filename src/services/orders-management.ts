@@ -1,12 +1,15 @@
 import { createHash } from "crypto";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { requireOwnerBusinessLink } from "@/lib/business-access";
 import {
   PAYMENT_DONE,
+  canMarkCashOrderPaid,
   STATUS_CODE_BY_NAME,
   canTransitionOrderStatus,
   getAllowedOrderActions,
   isStripePaidOrder,
+  isUnpaidCardOrder,
   normalizeOrderStatus,
   normalizeOrderType,
   type OrderAction,
@@ -260,24 +263,7 @@ export async function requireOrdersBusinessAccess(businessId: number) {
     throw new Error("Unauthorized");
   }
 
-  const owner = await prisma.business_owner.findFirst({
-    where: { VISITORS_ACCOUNT_ID: visitorAccountId },
-  });
-
-  if (!owner) {
-    throw new Error("Forbidden");
-  }
-
-  const access = await prisma.business_owner_2_business.findFirst({
-    where: {
-      BUSINESS_OWNER_ID: BigInt(owner.BUSINESS_OWNER_ID),
-      BUSINESS_ID: BigInt(businessId),
-    },
-  });
-
-  if (!access) {
-    throw new Error("Forbidden");
-  }
+  await requireOwnerBusinessLink(prisma, visitorAccountId, businessId);
 }
 
 async function buildOrderRows(
@@ -323,7 +309,7 @@ async function buildOrderRows(
             : null) ||
           (detail.BUSINESS_PRODUCT_ID
             ? `Product #${detail.BUSINESS_PRODUCT_ID}`
-            : "Unknown product"),
+            : "Custom item"),
         ORDER_QUANTITY: quantity,
         PRODUCT_SELL_PRICE: sellPrice,
         PRODUCT_DISCOUNT: toNumber(detail.PRODUCT_DISCOUNT),
@@ -549,6 +535,10 @@ export async function updateOrderStatus(
     throw new Error("Order not found");
   }
 
+  if (isUnpaidCardOrder(order)) {
+    throw new Error("Wait for card payment confirmation before changing this order's status.");
+  }
+
   if (nextStatus === "rejected" && normalizeOrderStatus(order.ORDER_STATUS) === "rejected") {
     return (await buildOrderRows([order]))[0];
   }
@@ -592,9 +582,17 @@ export async function updateOrderStatus(
   }
 
   const updatedOrder = await prisma.$transaction(async (tx) => {
-    const nextOrder = await tx.business_order.update({
-      where: { BUSINESS_ORDER_ID: parsedOrderId },
+    const claimed = await tx.business_order.updateMany({
+      where: {
+        BUSINESS_ORDER_ID: parsedOrderId,
+        BUSINESS_ID: parsedBusinessId,
+        ORDER_STATUS: order.ORDER_STATUS,
+      },
       data,
+    });
+    if (claimed.count !== 1) throw new Error("Order changed. Refresh and try again.");
+    const nextOrder = await tx.business_order.findUniqueOrThrow({
+      where: { BUSINESS_ORDER_ID: parsedOrderId },
     });
 
     if (nextStatus === "delivered" || nextStatus === "picked_up") {
@@ -667,10 +665,24 @@ export async function updateOrderPayment(
 
   if (!order) throw new Error("Order not found");
 
+  if (!canMarkCashOrderPaid(order)) {
+    throw new Error("Only pending cash orders can be marked paid manually. Card payments are verified automatically.");
+  }
+
   const updatedOrder = await prisma.$transaction(async (tx) => {
-    const nextOrder = await tx.business_order.update({
-      where: { BUSINESS_ORDER_ID: parsedOrderId },
+    const claimed = await tx.business_order.updateMany({
+      where: {
+        BUSINESS_ORDER_ID: parsedOrderId,
+        BUSINESS_ID: parsedBusinessId,
+        PAYMENT_DONE: PAYMENT_DONE.PENDING,
+        PAYMENT_MODE: order.PAYMENT_MODE,
+        ORDER_STATUS: order.ORDER_STATUS,
+      },
       data: { PAYMENT_DONE: PAYMENT_DONE.PAID },
+    });
+    if (claimed.count !== 1) throw new Error("Payment changed. Refresh and try again.");
+    const nextOrder = await tx.business_order.findUniqueOrThrow({
+      where: { BUSINESS_ORDER_ID: parsedOrderId },
     });
     const notification = customerNotificationData(
       nextOrder,
@@ -788,7 +800,7 @@ export async function refundOrder(businessId: number, orderId: number) {
   return (await buildOrderRows([updatedOrder]))[0];
 }
 
-async function createStripeRefund(paymentIntentId: string, amount: number) {
+async function createStripeRefund(orderId: number, paymentIntentId: string, amount: number) {
   const secretKey = process.env.STRIPE_SECRET_KEY;
   if (!secretKey) throw new Error("Stripe secret key is not configured.");
 
@@ -797,6 +809,7 @@ async function createStripeRefund(paymentIntentId: string, amount: number) {
     headers: {
       Authorization: `Bearer ${secretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
+      "Idempotency-Key": `foodeez-order-${orderId}-full-refund`,
     },
     body: new URLSearchParams({
       payment_intent: paymentIntentId,
@@ -836,7 +849,7 @@ async function refundOrderInternal(
   }
 
   const amount = decimalToCents(order.ORDER_FINAL_AMOUNT);
-  const refund = await createStripeRefund(order.STRIPE_PAYMENT_INTENT_ID, amount);
+  const refund = await createStripeRefund(order.BUSINESS_ORDER_ID, order.STRIPE_PAYMENT_INTENT_ID, amount);
   if (!refund.id) throw new Error("Stripe refund response was missing an id.");
 
   const updatedOrder = await prisma.$transaction(async (tx) => {
