@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import {
+  BadgePercent,
   ChevronDown,
   FolderKanban,
   LayoutDashboard,
@@ -36,6 +37,11 @@ export const adminNavItems = [
     label: "POS",
     href: "/pos",
     icon: MonitorSmartphone,
+  },
+  {
+    label: "Discounts",
+    href: "/discounts",
+    icon: BadgePercent,
   },
 ];
 

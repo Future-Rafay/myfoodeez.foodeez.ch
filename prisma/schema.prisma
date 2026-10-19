@@ -289,6 +289,11 @@ model business_order {
   ORDER_TAX_AMOUNT           Decimal?  @default(0.00) @db.Decimal(8, 2)
   ORDER_NET_AMOUNT           Decimal?  @default(0.00) @db.Decimal(8, 2)
   ORDER_DISCOUNT_AMOUNT      Decimal?  @default(0.00) @db.Decimal(8, 2)
+  DISCOUNT_ID                Int?
+  DISCOUNT_NAME              String?   @db.VarChar(100)
+  DISCOUNT_TYPE              String?   @db.VarChar(20)
+  DISCOUNT_VALUE             Decimal?  @db.Decimal(8, 2)
+  DISCOUNT_CODE              String?   @db.VarChar(64)
   ORDER_AMOUNT               Decimal?  @default(0.00) @db.Decimal(8, 2)
   SHIPPING_CHARGES           Decimal?  @default(0.00) @db.Decimal(8, 2)
   ORDER_REFUND_AMOUNT        Decimal?  @default(0.00) @db.Decimal(8, 2)
@@ -312,7 +317,38 @@ model business_order {
   @@index([STRIPE_PAYMENT_INTENT_ID], map: "STRIPE_PAYMENT_INTENT_ID")
   @@index([VISITOR_ID, CREATION_DATETIME], map: "idx_business_order_visitor_created")
   @@index([EMAIL_ADDRESS, CREATION_DATETIME], map: "idx_business_order_email_created")
+  @@index([DISCOUNT_ID], map: "idx_business_order_discount")
   @@index([BUSINESS_ID, ORDER_STATUS, CREATION_DATETIME], map: "idx_business_order_business_status_created")
+}
+
+model business_discount {
+  DISCOUNT_ID       Int       @id @default(autoincrement())
+  BUSINESS_ID       Int
+  NAME              String    @db.VarChar(100)
+  TYPE              String    @db.VarChar(20)
+  VALUE             Decimal   @db.Decimal(8, 2)
+  MINIMUM_ORDER     Decimal?  @db.Decimal(8, 2)
+  ACTIVE            Int       @default(0) @db.TinyInt
+  POS_ENABLED       Int       @default(0) @db.TinyInt
+  ONLINE_ENABLED    Int       @default(0) @db.TinyInt
+  ONLINE_AUTOMATIC  Int       @default(0) @db.TinyInt
+  VALID_FROM        DateTime? @db.Date
+  VALID_UNTIL       DateTime? @db.Date
+  CREATION_DATETIME DateTime  @default(now()) @db.DateTime(0)
+
+  @@unique([BUSINESS_ID, NAME], map: "business_discount_business_name_unique")
+  @@index([BUSINESS_ID, ACTIVE], map: "idx_business_discount_business_active")
+}
+
+model business_discount_code {
+  CODE_ID     Int    @id @default(autoincrement())
+  BUSINESS_ID Int
+  DISCOUNT_ID Int
+  CODE        String @db.VarChar(64)
+  ACTIVE      Int    @default(1) @db.TinyInt
+
+  @@unique([BUSINESS_ID, CODE], map: "business_discount_code_business_code_unique")
+  @@index([DISCOUNT_ID], map: "idx_business_discount_code_discount")
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
