@@ -106,6 +106,8 @@ export type AdminOrderRow = {
   TAX_AMOUNT: number;
   NET_AMOUNT: number;
   DISCOUNT_AMOUNT: number;
+  DISCOUNT_NAME: string | null;
+  DISCOUNT_CODE: string | null;
   SHIPPING_AMOUNT: number;
   REFUND_AMOUNT: number;
   FINAL_AMOUNT: number;
@@ -346,6 +348,8 @@ async function buildOrderRows(
       TAX_AMOUNT: toNumber(order.ORDER_TAX_AMOUNT),
       NET_AMOUNT: toNumber(order.ORDER_NET_AMOUNT),
       DISCOUNT_AMOUNT: toNumber(order.ORDER_DISCOUNT_AMOUNT),
+      DISCOUNT_NAME: order.DISCOUNT_NAME,
+      DISCOUNT_CODE: order.DISCOUNT_CODE,
       SHIPPING_AMOUNT: toNumber(order.SHIPPING_CHARGES),
       REFUND_AMOUNT: toNumber(order.ORDER_REFUND_AMOUNT),
       FINAL_AMOUNT: toNumber(order.ORDER_FINAL_AMOUNT),

@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { localDateInputValue, localDayIsoRange } from "@/lib/pos-date-range";
+import { calculateDiscount, cents, chf, swissDate, type Discount } from "@/lib/discounts";
 import { resolveMediaUrl } from "@/lib/media";
 import type { PosCatalog, PosReceipt } from "@/services/pos-management";
 
@@ -27,11 +28,17 @@ const money = new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF
 export default function PosWorkspace({
   businessId,
   initialCatalog,
+  initialDiscounts,
 }: {
   businessId: number;
   initialCatalog: PosCatalog;
+  initialDiscounts: Discount[];
 }) {
   const [catalog, setCatalog] = useState(initialCatalog);
+  const [discounts, setDiscounts] = useState(initialDiscounts);
+  const [selectedDiscountId, setSelectedDiscountId] = useState<number | null>(null);
+  const [cardQuoteCents, setCardQuoteCents] = useState<number | null>(null);
+  const [uncertainAttempt, setUncertainAttempt] = useState<{ paymentMethod: "cash" | "card"; finalCents: number } | null>(null);
   const [menuId, setMenuId] = useState(initialCatalog.menus[0]?.id ?? 0);
   const [categoryId, setCategoryId] = useState(initialCatalog.menus[0]?.categories[0]?.categoryId ?? 0);
   const [page, setPage] = useState(1);
@@ -58,6 +65,12 @@ export default function PosWorkspace({
   const pageCount = Math.max(1, Math.ceil(products.length / pageSize));
   const visibleProducts = products.slice((page - 1) * pageSize, page * pageSize);
   const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  const subtotalCents = cents(total);
+  const selectedDiscount = discounts.find((item) => item.id === selectedDiscountId);
+  const eligibleDiscounts = discounts.filter((item) => calculateDiscount(item, subtotalCents, "pos") > 0);
+  const discountCents = selectedDiscount ? calculateDiscount(selectedDiscount, subtotalCents, "pos") : 0;
+  const payableCents = subtotalCents - discountCents;
+  const discountInvalid = selectedDiscountId !== null && !discountCents;
 
   useEffect(() => {
     setCategoryId((current) =>
@@ -68,7 +81,7 @@ export default function PosWorkspace({
     setPage(1);
   }, [menuId, selectedMenu]);
   useEffect(() => setPage(1), [categoryId]);
-  useEffect(() => setRequestId(crypto.randomUUID()), [cart]);
+  useEffect(() => { setRequestId(crypto.randomUUID()); setCardQuoteCents(null); }, [cart]);
   useEffect(() => {
     const update = () => setFullscreen(document.fullscreenElement === workspaceRef.current);
     document.addEventListener("fullscreenchange", update);
@@ -76,7 +89,7 @@ export default function PosWorkspace({
   }, []);
 
   function addProduct(product: Product) {
-    if (busy) return;
+    if (busy || uncertainAttempt) return;
     setCart((current) => {
       const found = current.find((line) => line.productId === product.id);
       return found
@@ -93,7 +106,7 @@ export default function PosWorkspace({
   }
 
   function changeQuantity(key: string, delta: number) {
-    if (busy) return;
+    if (busy || uncertainAttempt) return;
     setCart((current) =>
       current
         .map((line) => line.key === key ? { ...line, quantity: line.quantity + delta } : line)
@@ -102,7 +115,7 @@ export default function PosWorkspace({
   }
 
   function addCustomItem() {
-    if (busy) return;
+    if (busy || uncertainAttempt) return;
     const price = Number(customPrice);
     if (!Number.isFinite(price) || price <= 0) {
       setError("Enter a custom item price greater than CHF 0.");
@@ -125,10 +138,46 @@ export default function PosWorkspace({
     if (response.ok) setCatalog((await response.json()) as PosCatalog);
   }
 
-  async function completeSale(paymentMethod: "cash" | "card") {
-    if (!cart.length || busy) return;
+  async function refreshDiscounts() {
+    const response = await fetch("/api/dashboard/" + businessId + "/discounts", { cache: "no-store" });
+    if (response.ok) {
+      const data = await response.json();
+      const today = swissDate();
+      setDiscounts((data.discounts as Discount[]).filter((item) => item.active && item.posEnabled &&
+        (!item.validFrom || item.validFrom <= today) && (!item.validUntil || item.validUntil >= today)));
+    }
+  }
+
+  function orderItems() {
+    return cart.map((line) => line.kind === "product"
+      ? { kind: "product", productId: line.productId, quantity: line.quantity }
+      : { kind: "custom", price: line.price, quantity: line.quantity });
+  }
+
+  async function startSale(paymentMethod: "cash" | "card") {
+    if (!cart.length || busy || uncertainAttempt || discountInvalid) return;
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/api/dashboard/" + businessId + "/pos/quote", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: orderItems(), discountId: selectedDiscountId }),
+      });
+      const quote = await response.json();
+      if (!response.ok) throw new Error(quote.error || "Could not price sale.");
+      if (quote.finalCents !== payableCents) throw new Error("Sale total changed. Refresh the POS and review the amount.");
+      if (paymentMethod === "card") { setCardQuoteCents(quote.finalCents); setCardConfirmOpen(true); }
+      else await completeSale("cash", quote.finalCents);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not price sale.");
+      void refreshCatalog(); void refreshDiscounts();
+    } finally { setBusy(false); }
+  }
+
+  async function completeSale(paymentMethod: "cash" | "card", expectedFinalCents: number) {
+    if (!cart.length) return;
     setBusy(true);
     setError("");
+    let responseStatus = 0;
     try {
       const response = await fetch("/api/dashboard/" + businessId + "/pos/orders", {
         method: "POST",
@@ -136,20 +185,23 @@ export default function PosWorkspace({
         body: JSON.stringify({
           requestId,
           paymentMethod,
-          items: cart.map((line) =>
-            line.kind === "product"
-              ? { kind: "product", productId: line.productId, quantity: line.quantity }
-              : { kind: "custom", price: line.price, quantity: line.quantity }
-          ),
+          items: orderItems(),
+          discountId: selectedDiscountId,
+          expectedFinalCents,
         }),
       });
+      responseStatus = response.status;
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || "Sale could not be completed.");
       setReceipt(data as PosReceipt);
       setCart([]);
+      setSelectedDiscountId(null);
+      setUncertainAttempt(null);
       void refreshCatalog().catch(() => setError("Sale completed, but the POS menu could not refresh."));
+      void refreshDiscounts();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Sale could not be completed.");
+      if (!responseStatus || responseStatus >= 500) setUncertainAttempt({ paymentMethod, finalCents: expectedFinalCents });
     } finally {
       setBusy(false);
     }
@@ -244,7 +296,7 @@ export default function PosWorkspace({
           {visibleProducts.length ? (
             <div className="mt-3 grid min-h-0 flex-1 content-start grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {visibleProducts.map((product) => (
-                <PosProductTile key={product.id} product={product} busy={busy} onClick={() => addProduct(product)} />
+                <PosProductTile key={product.id} product={product} busy={busy || Boolean(uncertainAttempt)} onClick={() => addProduct(product)} />
               ))}
             </div>
           ) : (
@@ -255,7 +307,7 @@ export default function PosWorkspace({
             </div>
           )}
           <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2">
-            <Button variant="outline" onClick={() => setCustomOpen(true)} disabled={busy} className="min-h-11 gap-2">
+            <Button variant="outline" onClick={() => setCustomOpen(true)} disabled={busy || Boolean(uncertainAttempt)} className="min-h-11 gap-2">
               <Plus className="size-4" /> Custom item
             </Button>
             <div className="flex items-center gap-2">
@@ -287,11 +339,11 @@ export default function PosWorkspace({
                 </div>
                 <div className="mt-2 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                     <Button variant="outline" size="icon" className="size-10" disabled={busy} onClick={() => changeQuantity(line.key, -1)} aria-label={"Decrease " + line.name}>
+                     <Button variant="outline" size="icon" className="size-10" disabled={busy || Boolean(uncertainAttempt)} onClick={() => changeQuantity(line.key, -1)} aria-label={"Decrease " + line.name}>
                       <Minus className="size-4" />
                     </Button>
                     <span className="min-w-7 text-center text-sm font-medium">{line.quantity}</span>
-                     <Button variant="outline" size="icon" className="size-10" disabled={busy} onClick={() => changeQuantity(line.key, 1)} aria-label={"Increase " + line.name}>
+                     <Button variant="outline" size="icon" className="size-10" disabled={busy || Boolean(uncertainAttempt)} onClick={() => changeQuantity(line.key, 1)} aria-label={"Increase " + line.name}>
                       <Plus className="size-4" />
                     </Button>
                   </div>
@@ -299,7 +351,7 @@ export default function PosWorkspace({
                     variant="outline"
                     size="icon"
                      className="ml-3 size-10 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-                     disabled={busy}
+                     disabled={busy || Boolean(uncertainAttempt)}
                     onClick={() => setCart((current) => current.filter((item) => item.key !== line.key))}
                     aria-label={"Remove " + line.name}
                   >
@@ -314,17 +366,29 @@ export default function PosWorkspace({
             )}
           </div>
           <div className="border-t border-gray-200 pt-3">
+            <div className="mb-3 space-y-2">
+              <p className="text-sm font-medium text-gray-700">Discount presets</p>
+              <div className="flex flex-wrap gap-2">
+                {eligibleDiscounts.map((discount) => <Button key={discount.id} type="button" size="sm" variant={selectedDiscountId === discount.id ? "default" : "outline"} disabled={busy || Boolean(uncertainAttempt)} onClick={() => setSelectedDiscountId((current) => current === discount.id ? null : discount.id)} aria-pressed={selectedDiscountId === discount.id}>{discount.name} · {discount.type === "percentage" ? `${discount.value}%` : money.format(discount.value)}</Button>)}
+                {!eligibleDiscounts.length && <span className="text-xs text-gray-500">No eligible presets for this sale</span>}
+              </div>
+              {selectedDiscountId !== null && <Button type="button" size="sm" variant="ghost" onClick={() => setSelectedDiscountId(null)} disabled={busy || Boolean(uncertainAttempt)}>Remove discount</Button>}
+              {discountInvalid && <p role="alert" className="text-xs text-red-700">This sale does not qualify for the selected discount.</p>}
+            </div>
+            {discountCents > 0 && <div className="mb-1 flex justify-between text-sm"><span>Original subtotal</span><span>{money.format(chf(subtotalCents))}</span></div>}
+            {discountCents > 0 && <div className="mb-2 flex justify-between text-sm text-green-700"><span>{selectedDiscount?.name}</span><span>-{money.format(chf(discountCents))}</span></div>}
             <div className="mb-3 flex items-center justify-between text-lg font-bold">
-              <span>Total</span><span>{money.format(total)}</span>
+              <span>Total</span><span>{money.format(chf(payableCents))}</span>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Button onClick={() => completeSale("cash")} disabled={!cart.length || busy} className="min-h-12 bg-foodeez-primary text-white hover:bg-foodeez-secondary">
+              <Button onClick={() => startSale("cash")} disabled={!cart.length || busy || Boolean(uncertainAttempt) || discountInvalid} className="min-h-12 bg-foodeez-primary text-white hover:bg-foodeez-secondary">
                 {busy ? "Completing…" : "Pay Cash"}
               </Button>
-              <Button onClick={() => setCardConfirmOpen(true)} disabled={!cart.length || busy} className="min-h-12 bg-foodeez-primary text-white hover:bg-foodeez-secondary">
+              <Button onClick={() => startSale("card")} disabled={!cart.length || busy || Boolean(uncertainAttempt) || discountInvalid} className="min-h-12 bg-foodeez-primary text-white hover:bg-foodeez-secondary">
                 {busy ? "Completing…" : "Card Terminal"}
               </Button>
             </div>
+            {uncertainAttempt && <div className="mt-3 space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950"><p>The sale may have completed. Check POS Orders, then retry this same sale without charging the customer again.</p><Button variant="outline" disabled={busy} onClick={() => void completeSale(uncertainAttempt.paymentMethod, uncertainAttempt.finalCents)}>Retry same sale</Button></div>}
           </div>
         </aside>
       </div>
@@ -347,11 +411,11 @@ export default function PosWorkspace({
         <DialogContent portalContainer={workspaceRef.current}>
           <DialogHeader><DialogTitle>Confirm Card Terminal Payment</DialogTitle></DialogHeader>
           <p className="text-sm text-gray-700">
-            Complete the payment on your separate card terminal first. Foodeez cannot verify that payment automatically.
+            Charge {money.format(chf(cardQuoteCents ?? payableCents))} on your separate card terminal first. Foodeez cannot verify that payment automatically.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCardConfirmOpen(false)}>Go Back</Button>
-            <Button onClick={() => { setCardConfirmOpen(false); void completeSale("card"); }}>
+            <Button onClick={() => { setCardConfirmOpen(false); void completeSale("card", cardQuoteCents ?? payableCents); }}>
               Confirm Payment Received
             </Button>
           </DialogFooter>
@@ -451,6 +515,7 @@ function Receipt({ receipt }: { receipt: PosReceipt }) {
           </div>
         ))}
       </div>
+      {receipt.discountAmount > 0 && <div className="space-y-1"><div className="flex justify-between"><span>Original subtotal</span><span>{money.format(receipt.subtotal)}</span></div><div className="flex justify-between"><span>{receipt.discountName || "Discount"}</span><span>-{money.format(receipt.discountAmount)}</span></div></div>}
       <div className="flex justify-between text-base font-bold">
         <span>Total</span><span>{money.format(receipt.total)}</span>
       </div>

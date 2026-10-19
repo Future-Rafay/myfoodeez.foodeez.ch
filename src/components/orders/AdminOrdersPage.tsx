@@ -1141,6 +1141,7 @@ function OrderDetailsModal({
                 value={order.DISCOUNT_AMOUNT}
                 danger
               />
+              {order.DISCOUNT_NAME && <DetailLine label="Discount preset" value={`${order.DISCOUNT_NAME}${order.DISCOUNT_CODE ? ` (${order.DISCOUNT_CODE})` : ""}`} />}
               <MoneyLine
                 label="Shipping charges"
                 value={order.SHIPPING_AMOUNT}

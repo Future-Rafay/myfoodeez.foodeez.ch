@@ -11,8 +11,11 @@ function errorResponse(error: unknown) {
   if (error instanceof InventoryUnavailableError) {
     return NextResponse.json({ error: message }, { status: 409 });
   }
-  if (/^(Invalid POS request\.|Payment method must be|Add at least one item\.|Item quantities must be|Custom item price must be|Invalid product\.|One or more products)/.test(message)) {
+  if (/^(Invalid POS request\.|Invalid sale total\.|Invalid discount selection\.|Payment method must be|Add at least one item\.|Item quantities must be|Custom item price must be|Invalid product\.|One or more products)/.test(message)) {
     return NextResponse.json({ error: message }, { status: 400 });
+  }
+  if (/^(Discount is no longer|Sale total changed)/.test(message)) {
+    return NextResponse.json({ error: message }, { status: 409 });
   }
   console.error("POS order request failed", error);
   return NextResponse.json({ error: "Could not confirm the sale. Check POS Orders, then retry the same sale if needed." }, { status: 503 });

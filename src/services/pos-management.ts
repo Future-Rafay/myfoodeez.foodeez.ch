@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { calculateDiscount, cents, chf, type AppliedDiscount } from "@/lib/discounts";
 import { consumeImmediateSaleInventory } from "@/lib/inventory";
 import { generateOrderNumberFromId } from "@/lib/orderNumber";
 import { ORDER_STATUS, PAYMENT_DONE } from "@/lib/orderStatus";
@@ -8,6 +9,7 @@ import prisma from "@/lib/prisma";
 import { normalizePosItems, type RawPosItem } from "@/lib/pos-rules";
 import { getMenuCardWorkspace, listMenuCards, type MenuCardDetailRow } from "@/services/menu-management";
 import { requireOrdersBusinessAccess } from "@/services/orders-management";
+import { discountRow } from "@/services/discount-management";
 
 export type PosCatalog = {
   menus: Array<{ id: number; title: string; categories: MenuCardDetailRow[] }>;
@@ -23,6 +25,9 @@ export type PosReceipt = {
   restaurantAddress: string;
   paymentMethod: "cash" | "card";
   total: number;
+  subtotal: number;
+  discountAmount: number;
+  discountName: string | null;
   items: Array<{ name: string; quantity: number; unitPrice: number; subtotal: number }>;
 };
 
@@ -32,6 +37,9 @@ type PosOrderRecord = {
   CREATION_DATETIME: Date | null;
   PAYMENT_MODE: string | null;
   ORDER_FINAL_AMOUNT: unknown;
+  ORDER_GROSS_AMOUNT?: unknown;
+  ORDER_DISCOUNT_AMOUNT?: unknown;
+  DISCOUNT_NAME?: string | null;
 };
 
 type PosReceiptBusiness = {
@@ -67,6 +75,9 @@ export function buildPosReceipt(
     ].filter(Boolean).join(", "),
     paymentMethod: order.PAYMENT_MODE === "card" ? "card" : "cash",
     total: toNumber(order.ORDER_FINAL_AMOUNT),
+    subtotal: toNumber(order.ORDER_GROSS_AMOUNT) || toNumber(order.ORDER_FINAL_AMOUNT),
+    discountAmount: toNumber(order.ORDER_DISCOUNT_AMOUNT),
+    discountName: order.DISCOUNT_NAME || null,
     items: details.map((detail) => {
       const quantity = toNumber(detail.ORDER_QUANTITY);
       const unitPrice = toNumber(detail.PRODUCT_SELL_PRICE);
@@ -112,7 +123,8 @@ export async function getPosCatalog(businessId: number): Promise<PosCatalog> {
 async function findByRequestId(businessId: number, requestId: string) {
   const rows = await prisma.$queryRaw<PosOrderRecord[]>`
     SELECT BUSINESS_ORDER_ID, ORDER_NUMBER, CREATION_DATETIME,
-           PAYMENT_MODE, ORDER_FINAL_AMOUNT
+           PAYMENT_MODE, ORDER_FINAL_AMOUNT, ORDER_GROSS_AMOUNT,
+           ORDER_DISCOUNT_AMOUNT, DISCOUNT_NAME
     FROM business_order
     WHERE BUSINESS_ID = ${businessId}
       AND POS_REQUEST_ID = ${requestId}
@@ -151,21 +163,8 @@ async function receiptForOrder(businessId: number, order: PosOrderRecord) {
   return buildPosReceipt(order, business, details, names);
 }
 
-export async function createPosOrder(
-  businessId: number,
-  input: { requestId?: unknown; paymentMethod?: unknown; items?: PosCartItemInput[] }
-) {
-  await requireOrdersBusinessAccess(businessId);
-  const requestId = String(input.requestId || "");
-  if (!/^[a-zA-Z0-9-]{16,64}$/.test(requestId)) throw new Error("Invalid POS request.");
-  const paymentMethod = String(input.paymentMethod || "");
-  if (paymentMethod !== "cash" && paymentMethod !== "card") {
-    throw new Error("Payment method must be Cash or Card.");
-  }
-  const existing = await findByRequestId(businessId, requestId);
-  if (existing) return receiptForOrder(businessId, existing);
-
-  const items = normalizePosItems(input.items || []);
+async function preparePosItems(businessId: number, rawItems: PosCartItemInput[]) {
+  const items = normalizePosItems(rawItems);
   const catalog = await getPosCatalog(businessId);
   const allowedProductIds = new Set(
     catalog.menus.flatMap((menu) =>
@@ -200,12 +199,62 @@ export async function createPosOrder(
     productId: item.kind === "product" ? item.productId : null,
     price: item.kind === "product" ? priceByProductId.get(item.productId) || 0 : item.price,
   }));
-  const total = pricedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const subtotalCents = pricedItems.reduce((sum, item) => sum + cents(item.price) * item.quantity, 0);
+  return { pricedItems, productById, subtotalCents };
+}
+
+function discountIdFrom(value: unknown) {
+  if (value == null) return null;
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("Invalid discount selection.");
+  return id;
+}
+
+async function pricePosDiscount(
+  client: Pick<typeof prisma, "business_discount">,
+  businessId: number,
+  discountId: number | null,
+  subtotalCents: number
+): Promise<AppliedDiscount | null> {
+  if (!discountId) return null;
+  const row = await client.business_discount.findFirst({ where: { DISCOUNT_ID: discountId, BUSINESS_ID: businessId } });
+  if (!row) throw new Error("Discount is no longer available. Refresh the sale.");
+  const discount = discountRow(row);
+  const amountCents = calculateDiscount(discount, subtotalCents, "pos");
+  if (!amountCents) throw new Error("Discount is no longer eligible for this sale.");
+  return { id: discount.id, name: discount.name, type: discount.type, value: discount.value, amountCents, code: null };
+}
+
+export async function quotePosOrder(businessId: number, input: { items?: PosCartItemInput[]; discountId?: unknown }) {
+  await requireOrdersBusinessAccess(businessId);
+  const { subtotalCents } = await preparePosItems(businessId, input.items || []);
+  const applied = await pricePosDiscount(prisma, businessId, discountIdFrom(input.discountId), subtotalCents);
+  return { subtotalCents, discountCents: applied?.amountCents ?? 0, finalCents: subtotalCents - (applied?.amountCents ?? 0), discountName: applied?.name ?? null };
+}
+
+export async function createPosOrder(
+  businessId: number,
+  input: { requestId?: unknown; paymentMethod?: unknown; items?: PosCartItemInput[]; discountId?: unknown; expectedFinalCents?: unknown }
+) {
+  await requireOrdersBusinessAccess(businessId);
+  const requestId = String(input.requestId || "");
+  if (!/^[a-zA-Z0-9-]{16,64}$/.test(requestId)) throw new Error("Invalid POS request.");
+  const paymentMethod = String(input.paymentMethod || "");
+  if (paymentMethod !== "cash" && paymentMethod !== "card") throw new Error("Payment method must be Cash or Card.");
+  const existing = await findByRequestId(businessId, requestId);
+  if (existing) return receiptForOrder(businessId, existing);
+  const expectedFinalCents = Number(input.expectedFinalCents);
+  if (!Number.isSafeInteger(expectedFinalCents) || expectedFinalCents <= 0) throw new Error("Invalid sale total.");
+  const { pricedItems, productById, subtotalCents } = await preparePosItems(businessId, input.items || []);
+  const discountId = discountIdFrom(input.discountId);
   const session = await getServerSession(authOptions);
 
   let order;
   try {
     order = await prisma.$transaction(async (tx) => {
+      const applied = await pricePosDiscount(tx, businessId, discountId, subtotalCents);
+      const finalCents = subtotalCents - (applied?.amountCents ?? 0);
+      if (finalCents !== expectedFinalCents) throw new Error("Sale total changed. Review the amount and try again.");
       await consumeImmediateSaleInventory(
         tx,
         businessId,
@@ -232,10 +281,15 @@ export async function createPosOrder(
           FIRST_NAME: "Walk-in",
           LAST_NAME: "",
           SHIPPING_CHARGES: 0,
-          ORDER_GROSS_AMOUNT: total,
-          ORDER_NET_AMOUNT: total,
-          ORDER_AMOUNT: total,
-          ORDER_FINAL_AMOUNT: total,
+          ORDER_GROSS_AMOUNT: chf(subtotalCents),
+          ORDER_NET_AMOUNT: chf(finalCents),
+          ORDER_AMOUNT: chf(finalCents),
+          ORDER_DISCOUNT_AMOUNT: chf(applied?.amountCents ?? 0),
+          ORDER_FINAL_AMOUNT: chf(finalCents),
+          DISCOUNT_ID: applied?.id ?? null,
+          DISCOUNT_NAME: applied?.name ?? null,
+          DISCOUNT_TYPE: applied?.type ?? null,
+          DISCOUNT_VALUE: applied?.value ?? null,
           DELIVERY_DATETIME: new Date(),
           POS_REQUEST_ID: requestId,
         },

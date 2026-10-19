@@ -270,6 +270,9 @@ Settings components:
 
 POS components:
 
+- Discounts are restaurant-owned presets managed at `/dashboard/[businessId]/discounts` through `src/services/discount-management.ts`. New definitions start inactive; POS and online availability, Swiss-local inclusive dates, minimum items subtotal, and optional online automatic application control eligibility. Coupon codes are restaurant-scoped and reference a discount.
+- POS selects at most one eligible preset and submits its ID with an expected payable amount. `src/services/pos-management.ts` recalculates the order from trusted product prices plus custom items and snapshots the discount on the order. The receipt and order details show the order-wide reduction separately. The discount and sale request ID persist across uncertain retries, then clear after success.
+- Apply `prisma/migrations/20261019000000_add_business_discounts/migration.sql` manually to the shared database before deploying either repository's discount code; keep both Prisma schemas aligned. Release POS before enabling online discounts.
 - The slim web POS lives at `/dashboard/[businessId]/pos`; its catalog and order endpoints are `/api/dashboard/[businessId]/pos/catalog` and `/api/dashboard/[businessId]/pos/orders`.
 - POS catalog data reuses active menu-card/category/product relationships and includes only menu cards with `SALES_CHANNEL` set to `pos` or `both`. Do not create a parallel POS catalog.
 - POS orders use terminal `web-pos`, pickup/picked-up status, paid cash or external-terminal card, zero delivery fee, and request-id idempotency. Immediate POS sales atomically decrement tracked available and on-hand stock through the shared inventory helper within the order transaction; regular orders still use reserve/finalize. Browser print is the only receipt-printer integration.
