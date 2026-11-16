@@ -92,7 +92,7 @@ export default async function PlatformRequestsPage({ searchParams }: { searchPar
                 </div>
                 {request.status === "pending" || request.status === "email_pending" ? (
                   /* Approve is the routine action; Reject sits apart and asks for a reason first. */
-                  <div className="flex shrink-0 items-center gap-6">
+                  <div className="flex shrink-0 items-center gap-10">
                     {request.status === "pending" ? (
                       <ConfirmActionButton
                         action={approveRequest}

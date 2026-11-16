@@ -75,7 +75,7 @@ export default async function PlatformRestaurantsPage({ searchParams }: { search
                   <TableCell className="text-gray-600">{formatDate(row.createdAt)}</TableCell>
                   <TableCell>
                     {/* The routine action sits on the left; the one that takes a restaurant offline is set apart and asks first. */}
-                    <div className="flex items-center justify-end gap-6">
+                    <div className="flex items-center justify-end gap-10">
                       {!row.approved ? (
                         <ConfirmActionButton action={setRestaurantApproval} fields={{ businessId: row.id, approved: 1 }} label="Approve" tone="primary" />
                       ) : !row.active ? (

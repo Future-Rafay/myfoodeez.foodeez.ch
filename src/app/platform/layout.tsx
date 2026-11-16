@@ -6,7 +6,7 @@ import { requirePlatformAdmin } from "@/lib/platform-admin";
 import { getPlatformOverview } from "@/services/platform-data";
 
 export const metadata: Metadata = {
-  title: "Super Admin | Foodeez",
+  title: "Admin | Foodeez",
   robots: { index: false, follow: false },
 };
 

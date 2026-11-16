@@ -65,7 +65,7 @@ export default async function PlatformModerationPage({ searchParams }: { searchP
                   ) : null}
                 </div>
                 {/* Approve is the routine action; Reject sits apart and asks first. */}
-                <div className="flex shrink-0 items-center gap-6">
+                <div className="flex shrink-0 items-center gap-10">
                   <ConfirmActionButton action={moderateContent} fields={{ kind, id: row.id, decision: "approve" }} label="Approve" tone="primary" />
                   <ConfirmActionButton
                     action={moderateContent}

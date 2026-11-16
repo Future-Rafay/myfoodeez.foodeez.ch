@@ -29,7 +29,7 @@ function SubmitButton({ children, tone }: { children: React.ReactNode; tone: Pro
   );
 }
 
-function ActionForm({ action, fields, children, tone, onDone, noteLabel }: Pick<Props, "action" | "fields" | "tone"> & { children: React.ReactNode; onDone?: () => void; noteLabel?: string }) {
+function ActionForm({ action, fields, children, tone, onDone, noteLabel, onCancel }: Pick<Props, "action" | "fields" | "tone"> & { children: React.ReactNode; onDone?: () => void; noteLabel?: string; onCancel?: () => void }) {
   return (
     <form
       action={async (formData) => {
@@ -46,7 +46,17 @@ function ActionForm({ action, fields, children, tone, onDone, noteLabel }: Pick<
           <textarea name="note" maxLength={500} rows={3} className="mt-2 block w-full rounded-md border border-gray-200 px-3 py-2 text-sm font-normal outline-none focus-visible:border-foodeez-primary focus-visible:ring-2 focus-visible:ring-foodeez-primary/20" />
         </label>
       ) : null}
-      <SubmitButton tone={tone}>{children}</SubmitButton>
+      {onCancel ? (
+        // Same footer as the other dialogs: the safe Cancel first, the action set apart on the right.
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+          <Button type="button" variant="outline" onClick={onCancel} autoFocus>
+            Cancel
+          </Button>
+          <SubmitButton tone={tone}>{children}</SubmitButton>
+        </div>
+      ) : (
+        <SubmitButton tone={tone}>{children}</SubmitButton>
+      )}
     </form>
   );
 }
@@ -66,20 +76,19 @@ export default function ConfirmActionButton({ action, fields, label, confirm, to
             <DialogDescription>{confirm.description}</DialogDescription>
           </DialogHeader>
           {confirm.noteLabel ? (
-            <ActionForm action={action} fields={fields} tone={tone} onDone={() => setOpen(false)} noteLabel={confirm.noteLabel}>
+            <ActionForm action={action} fields={fields} tone={tone} onDone={() => setOpen(false)} noteLabel={confirm.noteLabel} onCancel={() => setOpen(false)}>
               {confirm.confirmLabel}
             </ActionForm>
-          ) : null}
-          <DialogFooter className="gap-2 sm:justify-between">
-            <Button type="button" variant="outline" onClick={() => setOpen(false)} autoFocus>
-              Cancel
-            </Button>
-            {confirm.noteLabel ? null : (
+          ) : (
+            <DialogFooter className="gap-2 sm:justify-between">
+              <Button type="button" variant="outline" onClick={() => setOpen(false)} autoFocus>
+                Cancel
+              </Button>
               <ActionForm action={action} fields={fields} tone={tone} onDone={() => setOpen(false)}>
                 {confirm.confirmLabel}
               </ActionForm>
-            )}
-          </DialogFooter>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </>
