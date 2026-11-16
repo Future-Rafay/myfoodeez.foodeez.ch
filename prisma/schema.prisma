@@ -197,6 +197,7 @@ model visitors_account {
   PIC                 String?   @db.VarChar(255)
   RESET_TOKEN         String?   @db.VarChar(255)
   RESET_TOKEN_EXPIRY  DateTime? @db.DateTime(0)
+  PLATFORM_ROLE       String?   @db.VarChar(20)
 }
 
 model visitor_business_review {
@@ -585,6 +586,83 @@ model business_2_business_category2 {
   DISPLAY_SEQ                   Int?
 
   @@ignore
+}
+
+model platform_audit_log {
+  AUDIT_LOG_ID              BigInt   @id @default(autoincrement())
+  CREATION_DATETIME         DateTime @default(now()) @db.DateTime(0)
+  ACTOR_VISITORS_ACCOUNT_ID BigInt
+  ACTION                    String   @db.VarChar(64)
+  ENTITY_TYPE               String   @db.VarChar(40)
+  ENTITY_ID                 String   @db.VarChar(64)
+  DETAILS_JSON              String?  @db.Text
+
+  @@index([ENTITY_TYPE, ENTITY_ID], map: "idx_platform_audit_log_entity")
+  @@index([CREATION_DATETIME], map: "idx_platform_audit_log_created")
+}
+
+model business_onboarding_request {
+  REQUEST_ID              Int       @id @default(autoincrement())
+  CREATION_DATETIME       DateTime  @default(now()) @db.DateTime(0)
+  REQUEST_TYPE            String    @db.VarChar(20)
+  STATUS                  String    @db.VarChar(20)
+  BUSINESS_ID             Int
+  VISITORS_ACCOUNT_ID     BigInt
+  CONTACT_NAME            String?   @db.VarChar(100)
+  CONTACT_PHONE           String?   @db.VarChar(45)
+  MESSAGE                 String?   @db.VarChar(1000)
+  EMAIL_CODE_HASH         String?   @db.Char(64)
+  EMAIL_CODE_EXPIRES      DateTime? @db.DateTime(0)
+  EMAIL_CODE_ATTEMPTS     Int       @default(0) @db.TinyInt
+  EMAIL_VERIFIED_DATETIME DateTime? @db.DateTime(0)
+  REVIEWED_BY             BigInt?
+  REVIEWED_DATETIME       DateTime? @db.DateTime(0)
+  REVIEW_NOTE             String?   @db.VarChar(500)
+
+  @@index([STATUS, CREATION_DATETIME], map: "idx_business_onboarding_request_status")
+  @@index([BUSINESS_ID], map: "idx_business_onboarding_request_business")
+  @@index([VISITORS_ACCOUNT_ID], map: "idx_business_onboarding_request_account")
+}
+
+model marketing_campaign {
+  CAMPAIGN_ID        Int       @id @default(autoincrement())
+  CREATION_DATETIME  DateTime  @default(now()) @db.DateTime(0)
+  UPDATED_DATETIME   DateTime  @default(now()) @db.DateTime(0)
+  NAME               String    @db.VarChar(160)
+  SUBJECT            String    @db.VarChar(200)
+  HTML               String    @db.MediumText
+  AUDIENCE           String    @db.VarChar(20)
+  STATUS             String    @default("draft") @db.VarChar(20)
+  SCHEDULED_DATETIME DateTime? @db.DateTime(0)
+  SENT_DATETIME      DateTime? @db.DateTime(0)
+  CREATED_BY         BigInt
+
+  @@index([STATUS, UPDATED_DATETIME], map: "idx_marketing_campaign_status")
+}
+
+model marketing_campaign_recipient {
+  RECIPIENT_ID        Int       @id @default(autoincrement())
+  CREATION_DATETIME   DateTime  @default(now()) @db.DateTime(0)
+  CAMPAIGN_ID         Int
+  BUSINESS_ID         Int?
+  SUBSCRIPTION_ID     BigInt?
+  EMAIL               String    @db.VarChar(320)
+  NAME                String?   @db.VarChar(255)
+  STATUS              String    @default("pending") @db.VarChar(20)
+  PROVIDER_MESSAGE_ID String?   @db.VarChar(120)
+  ERROR               String?   @db.VarChar(500)
+  SENT_DATETIME       DateTime? @db.DateTime(0)
+
+  @@unique([CAMPAIGN_ID, EMAIL], map: "marketing_campaign_recipient_campaign_email_unique")
+  @@index([CAMPAIGN_ID, STATUS], map: "idx_marketing_campaign_recipient_status")
+  @@index([BUSINESS_ID], map: "idx_marketing_campaign_recipient_business")
+  @@index([EMAIL], map: "idx_marketing_campaign_recipient_email")
+}
+
+model email_suppression {
+  EMAIL             String   @id @db.VarChar(320)
+  CREATION_DATETIME DateTime @default(now()) @db.DateTime(0)
+  REASON            String   @db.VarChar(40)
 }
 
 model business_settings {
