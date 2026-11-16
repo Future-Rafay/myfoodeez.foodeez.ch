@@ -7,8 +7,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { getOwnedBusinesses } from "@/services/admin-data";
 import { resolveMediaUrl } from "@/lib/media";
+import { getPlatformAdmin } from "@/lib/platform-admin";
+
+function PlatformLink() {
+  return (
+    <Link
+      href="/platform"
+      className="inline-flex items-center rounded-md border border-foodeez-primary/30 bg-white px-3 py-1.5 text-sm font-medium text-foodeez-primary shadow-xs hover:bg-foodeez-primary/5"
+    >
+      Super Admin
+    </Link>
+  );
+}
 
 export default async function DashboardRootPage() {
+  const platformAdmin = await getPlatformAdmin();
   let businesses;
 
   try {
@@ -33,6 +46,11 @@ export default async function DashboardRootPage() {
                 Your account is signed in, but it is not connected to a
                 Foodeez business owner profile yet.
               </p>
+              {platformAdmin ? (
+                <div className="mt-5">
+                  <PlatformLink />
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </div>
@@ -53,12 +71,15 @@ export default async function DashboardRootPage() {
               priority
             />
           </Link>
+          <div className="flex items-center gap-3">
+          {platformAdmin ? <PlatformLink /> : null}
           <Badge
             variant="outline"
             className="border-foodeez-primary/20 bg-foodeez-primary/5 text-foodeez-primary"
           >
             Admin
           </Badge>
+          </div>
         </div>
       </header>
 
