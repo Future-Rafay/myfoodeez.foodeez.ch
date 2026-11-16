@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { recordPlatformAction, requirePlatformAdmin } from "@/lib/platform-admin";
+import { OnboardingError, approveOnboardingRequest, rejectOnboardingRequest } from "@/services/platform-onboarding";
 
 // Every action re-checks the Super Admin role: server actions can be called from any browser.
 
@@ -61,4 +63,37 @@ export async function moderateContent(formData: FormData) {
   }
   await recordPlatformAction(admin, decision === "approve" ? "CONTENT_APPROVED" : "CONTENT_REJECTED", String(kind), id);
   revalidatePath("/platform", "layout");
+}
+
+const requestsUrl = (params: Record<string, string>) => `/platform/requests?${new URLSearchParams(params)}`;
+
+export async function approveRequest(formData: FormData) {
+  const admin = await requirePlatformAdmin();
+  const requestId = intField(formData, "requestId");
+  let target: string;
+  try {
+    const { emailed } = await approveOnboardingRequest(admin, requestId);
+    target = requestsUrl({ done: emailed ? "approved" : "approved-no-email" });
+  } catch (error) {
+    if (!(error instanceof OnboardingError)) throw error;
+    target = requestsUrl({ error: error.message });
+  }
+  revalidatePath("/platform", "layout");
+  redirect(target);
+}
+
+export async function rejectRequest(formData: FormData) {
+  const admin = await requirePlatformAdmin();
+  const requestId = intField(formData, "requestId");
+  const note = String(formData.get("note") ?? "").trim().slice(0, 500);
+  let target: string;
+  try {
+    const { emailed } = await rejectOnboardingRequest(admin, requestId, note);
+    target = requestsUrl({ done: emailed ? "rejected" : "rejected-no-email" });
+  } catch (error) {
+    if (!(error instanceof OnboardingError)) throw error;
+    target = requestsUrl({ error: error.message });
+  }
+  revalidatePath("/platform", "layout");
+  redirect(target);
 }

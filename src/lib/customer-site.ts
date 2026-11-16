@@ -22,3 +22,10 @@ export const restaurantProfileUrl = (name: string | null | undefined, id: number
 
 /** Owner-facing profile with the "Claim this business" card. */
 export const restaurantClaimUrl = (name: string | null | undefined, id: number) => customerSiteUrl(`/manage-business/${businessSlug(name, id)}`);
+
+/** Restaurant websites are often stored without a protocol ("www.pizza.ch"); same rule as the customer site's toExternalUrl. */
+export function toExternalUrl(url: string | null | undefined) {
+  const value = url?.trim();
+  if (!value || value === "0" || value === "null") return undefined;
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}

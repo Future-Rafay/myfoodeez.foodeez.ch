@@ -10,7 +10,7 @@ type Props = {
   fields: Record<string, string | number>;
   label: string;
   /** Risky actions open a confirmation dialog first; routine ones submit directly. */
-  confirm?: { title: string; description: string; confirmLabel: string };
+  confirm?: { title: string; description: string; confirmLabel: string; noteLabel?: string };
   tone?: "primary" | "neutral" | "danger";
 };
 
@@ -29,7 +29,7 @@ function SubmitButton({ children, tone }: { children: React.ReactNode; tone: Pro
   );
 }
 
-function ActionForm({ action, fields, children, tone, onDone }: Pick<Props, "action" | "fields" | "tone"> & { children: React.ReactNode; onDone?: () => void }) {
+function ActionForm({ action, fields, children, tone, onDone, noteLabel }: Pick<Props, "action" | "fields" | "tone"> & { children: React.ReactNode; onDone?: () => void; noteLabel?: string }) {
   return (
     <form
       action={async (formData) => {
@@ -40,6 +40,12 @@ function ActionForm({ action, fields, children, tone, onDone }: Pick<Props, "act
       {Object.entries(fields).map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={String(value)} />
       ))}
+      {noteLabel ? (
+        <label className="mb-4 block text-sm font-medium text-gray-900">
+          {noteLabel}
+          <textarea name="note" maxLength={500} rows={3} className="mt-2 block w-full rounded-md border border-gray-200 px-3 py-2 text-sm font-normal outline-none focus-visible:border-foodeez-primary focus-visible:ring-2 focus-visible:ring-foodeez-primary/20" />
+        </label>
+      ) : null}
       <SubmitButton tone={tone}>{children}</SubmitButton>
     </form>
   );
@@ -59,13 +65,20 @@ export default function ConfirmActionButton({ action, fields, label, confirm, to
             <DialogTitle>{confirm.title}</DialogTitle>
             <DialogDescription>{confirm.description}</DialogDescription>
           </DialogHeader>
+          {confirm.noteLabel ? (
+            <ActionForm action={action} fields={fields} tone={tone} onDone={() => setOpen(false)} noteLabel={confirm.noteLabel}>
+              {confirm.confirmLabel}
+            </ActionForm>
+          ) : null}
           <DialogFooter className="gap-2 sm:justify-between">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} autoFocus>
               Cancel
             </Button>
-            <ActionForm action={action} fields={fields} tone={tone} onDone={() => setOpen(false)}>
-              {confirm.confirmLabel}
-            </ActionForm>
+            {confirm.noteLabel ? null : (
+              <ActionForm action={action} fields={fields} tone={tone} onDone={() => setOpen(false)}>
+                {confirm.confirmLabel}
+              </ActionForm>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
