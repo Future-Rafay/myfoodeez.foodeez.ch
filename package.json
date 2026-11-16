@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src",
     "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
@@ -42,10 +42,10 @@
     "js-cookie": "^3.0.5",
     "lucide-react": "^0.525.0",
     "mariadb": "^3.5.3",
-    "next": "^15.5.18",
+    "next": "^16.4.6",
     "next-auth": "^4.24.11",
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "resend": "^6.38.1",
     "sanitize-html": "^2.18.2",
     "tailwind-merge": "^3.3.1"
@@ -59,7 +59,7 @@
     "@types/sanitize-html": "^2.16.2",
     "dotenv": "^17.4.2",
     "eslint": "^9",
-    "eslint-config-next": "15.4.2",
+    "eslint-config-next": "^16.4.6",
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
