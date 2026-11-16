@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
+import { isResetToken, MIN_PASSWORD_LENGTH } from '@/lib/auth';
 
 export async function POST(req: Request) {
     try {
@@ -9,6 +10,18 @@ export async function POST(req: Request) {
         if (!token || !password) {
             return NextResponse.json(
                 { message: 'Token and password are required' },
+                { status: 400 }
+            );
+        }
+        if (!isResetToken(token)) {
+            return NextResponse.json(
+                { message: 'Invalid or expired reset token' },
+                { status: 400 }
+            );
+        }
+        if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+            return NextResponse.json(
+                { message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` },
                 { status: 400 }
             );
         }
@@ -39,7 +52,8 @@ export async function POST(req: Request) {
             data: {
                 PASSWORD: hashedPassword,
                 RESET_TOKEN: null,
-                RESET_TOKEN_EXPIRY: null,
+                // Marks this password as set by the email's owner; the customer site's googleAccountUpdate keeps it.
+                RESET_TOKEN_EXPIRY: new Date(),
             },
         });
 
