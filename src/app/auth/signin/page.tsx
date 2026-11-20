@@ -28,7 +28,9 @@ export default function SignInPage() {
       if (res?.ok) {
         window.location.assign("/dashboard");
       } else {
-        setError("Invalid email or password");
+        // Only these two server messages are shown as written; anything else stays generic.
+        const message = res?.error ?? "";
+        setError(message.startsWith("Too many") || message.startsWith("Please confirm your email") ? message : "Invalid email or password");
       }
     } catch {
       setError("Unable to sign in right now. Please try again.");

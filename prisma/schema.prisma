@@ -198,6 +198,7 @@ model visitors_account {
   RESET_TOKEN         String?   @db.VarChar(255)
   RESET_TOKEN_EXPIRY  DateTime? @db.DateTime(0)
   PLATFORM_ROLE       String?   @db.VarChar(20)
+  EMAIL_VERIFIED_DATETIME DateTime? @db.DateTime(0)
 }
 
 model visitor_business_review {
