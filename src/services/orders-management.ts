@@ -465,19 +465,10 @@ export async function listOrders(params: ListOrdersParams) {
     take: limit,
   };
 
-  if (process.env.NODE_ENV === "development") {
-    console.log("[orders:list] Prisma where", where);
-  }
-
-  const [totalCount, orders, kpi, rawStatuses] = await Promise.all([
+  const [totalCount, orders, kpi] = await Promise.all([
     prisma.business_order.count({ where }),
     prisma.business_order.findMany(orderQueryArgs),
     getOrdersKpis(businessId),
-    prisma.business_order.findMany({
-      where: { BUSINESS_ID: businessId },
-      distinct: ["ORDER_STATUS"],
-      select: { ORDER_STATUS: true },
-    }),
   ]);
 
   const settings = await prisma.business_settings.findUnique({
@@ -487,13 +478,6 @@ export async function listOrders(params: ListOrdersParams) {
       DEFAULT_DELIVERY_PREP_MINUTES: true,
     },
   });
-
-  if (process.env.NODE_ENV === "development") {
-    console.log(
-      "[orders:list] Raw ORDER_STATUS values",
-      rawStatuses.map((order) => order.ORDER_STATUS)
-    );
-  }
 
   return {
     orders: await buildOrderRows(orders),

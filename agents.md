@@ -76,9 +76,7 @@ Existing API routes:
 - `/api/auth/forgot-password`: forgot-password handler.
 - `/api/auth/reset-password`: reset-password handler.
 - `/api/upload`: authenticated image upload route.
-- `/api/products`: legacy product CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped product routes below.
-- `/api/categories`: legacy category CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped category routes below.
-- `/api/tags`: legacy tag CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped tag routes below.
+- The legacy root `/api/products`, `/api/categories`, and `/api/tags` CRUD routes were removed (no callers in this repo, foodeez.ch, or foodeez-pos). Use the dashboard-scoped routes below.
 - `/api/dashboard/[businessId]/products`: authenticated selected-business Product list/create route. Supports search, category, status, page, and pageSize filters. Returns paginated product rows with tag/category shaping plus pricing, inventory, weight, and image fields.
 - `/api/dashboard/[businessId]/products/[id]`: authenticated selected-business Product update/delete route. `PATCH` updates full product data, including `COST_PRICE`, `COMPARE_AS_PRICE`, inventory fields, `WEIGHT`, `WEIGHT_UNIT`, `PIC`, or status-only payloads; `DELETE` soft-deletes by status.
 - `/api/pos/context`: authenticated POS bootstrap route. Returns the signed-in user plus only their active businesses and the identity/contact fields needed by the device restaurant chooser and receipts.
@@ -125,7 +123,7 @@ General:
 - Keep route-specific UI in `src/app/...`; reusable UI belongs under `src/components/...`.
 - Prefer existing UI primitives from `src/components/ui` before adding new component styles.
 - Interactive pages and components use `"use client"` at the top.
-- Server helper functions live in `src/services/HelperFunctions.ts` and use `"use server"`.
+- Server helper functions live in `src/services/HelperFunctions.ts` and use `"use server"`. Every export of a `"use server"` file (`HelperFunctions.ts`, `admin-data.ts`) is a public HTTP endpoint, so each one must check access itself (for example `requireBusinessAccess`) and return only the fields its caller needs. Do not keep unused exports there.
 - Shared utilities live in `src/lib`.
 
 Data and API patterns:
@@ -153,15 +151,17 @@ Data and API patterns:
 - Keep date/status behavior compatible with existing menu card availability, and do not enforce one active menu per business.
 - Menu Card category changes in `MenuCardDetailManagement` are draft-first. Add, remove, and drag reorder update local UI only until the owner clicks Save Changes; Discard reloads the saved workspace.
 - Menu Card preview products come from `business_food_menu_card_detail_view` and are read-only. Customer-facing menu-card views should filter to enabled cards (`STATUS = 1`) and enabled detail rows.
-- Image replacement/deletion paths clean up old S3 objects through `S3Storage`.
+- Image replacement/deletion paths clean up old S3 objects through `S3Storage`, only after the database write has committed.
 - Client forms call API routes with `fetch`, JSON bodies, and local loading/error state.
 - Product catalog interactions in `AdminProductsTable` use server actions from `admin-data.ts` for save, toggle status, and soft delete. Category and tag tables use the dashboard-scoped menu API routes.
-- Product create/update logic must save `business_product.COST_PRICE`, `PRODUCT_PRICE`, `COMPARE_AS_PRICE`, `TRACK_INVENTORY`, `INVENTORY_ON_HAND`, `INVENTORY_AVAILABLE`, `INVENTORY_COMMITED`, `WEIGHT`, `WEIGHT_UNIT`, and `PIC` through both the current `admin-data.ts` server-action path and the dashboard-scoped product API path in `menu-management.ts`.
+- Product create/update has one implementation: `createMenuProduct`/`updateMenuProduct` in `menu-management.ts`. The dashboard product API calls them directly, and `saveProduct` in `admin-data.ts` is a thin wrapper that calls them and then `revalidatePath`. Put validation, tag, inventory, and image rules there only; never re-add a second copy.
 - Product prices are CHF and must be `>= 0`. `PRODUCT_PRICE` is required, `COST_PRICE` is internal admin-only, and `COMPARE_AS_PRICE` should be greater than `PRODUCT_PRICE` when set above zero.
-- Product inventory tracking uses `TRACK_INVENTORY = 1` only when the owner checks "Track inventory for this product". When unchecked, save `TRACK_INVENTORY = 0` and set `INVENTORY_ON_HAND`, `INVENTORY_AVAILABLE`, and `INVENTORY_COMMITED` to `0`. When checked, owners edit on-hand stock and the backend recalculates `INVENTORY_AVAILABLE = max(INVENTORY_ON_HAND - INVENTORY_COMMITED, 0)`.
+- Product inventory tracking uses `TRACK_INVENTORY = 1` only when the owner checks "Track inventory for this product". When unchecked, save `TRACK_INVENTORY = 0` and set `INVENTORY_ON_HAND` and `INVENTORY_AVAILABLE` to `0`. When checked, owners edit on-hand stock only.
+- `INVENTORY_COMMITED` belongs to order reservations, never to the product form: creates set it to `0`, and updates never write it (the form field is read-only and the server ignores `inventory_commited`). After an update, `syncAvailableInventory` in `src/lib/inventory.ts` recalculates `INVENTORY_AVAILABLE = max(INVENTORY_ON_HAND - INVENTORY_COMMITED, 0)` in SQL from the row's live committed count, so a form opened before a new order cannot release that order's reserved stock.
 - Order inventory writes live in `src/lib/inventory.ts`. On order creation, tracked products reserve stock by decrementing `INVENTORY_AVAILABLE` and incrementing `INVENTORY_COMMITED` by `ORDER_QUANTITY`; untracked products do not change stock.
 - Admin order status updates call inventory helpers inside the same Prisma transaction as the `business_order` status update. Transitioning into delivered (`ORDER_STATUS = 3`) or picked up (`ORDER_STATUS = 6`) finalizes tracked stock by decrementing `INVENTORY_COMMITED` and `INVENTORY_ON_HAND`, while leaving `INVENTORY_AVAILABLE` unchanged from reservation; it does not automatically mark unpaid cash orders paid. Transitioning into rejected (`ORDER_STATUS = 4`) releases tracked stock by incrementing `INVENTORY_AVAILABLE` and decrementing `INVENTORY_COMMITED`, without changing `INVENTORY_ON_HAND`.
 - Inventory lifecycle updates rely on the existing status transition guard in `src/lib/orderStatus.ts` to avoid double finalization or double release. Helper math clamps counts so legacy/manual data cannot push `INVENTORY_ON_HAND` or `INVENTORY_COMMITED` below zero.
+- Stock writes must be relative and atomic (`{ decrement }` with a `gte` guard, or one SQL `UPDATE ... GREATEST(x - qty, 0)`), never read-then-write-absolute. `finalizeOrderInventory` uses a single relative `UPDATE` so two orders completing at once both count.
 - Inventory release also claims `business_order.INVENTORY_RELEASED_DATETIME`; a rejected order and an expired Stripe checkout therefore cannot release the same reservation twice, and finalized inventory skips orders whose reservation was already released.
 - Product weight uses `WEIGHT` plus `WEIGHT_UNIT`; allowed units in the admin form are `gm`, `kg`, `ml`, and `l`, defaulting to `0 gm`.
 - Orders management uses API routes from the `AdminOrdersPage` client island because it needs filter/search pagination and modal-driven status updates.
@@ -178,8 +178,8 @@ Data and API patterns:
 - Stripe refunds are full-order refunds based on `ORDER_FINAL_AMOUNT`, converted to cents without floating-point multiplication. A `pending` Stripe refund stores `STRIPE_REFUND_STATUS` but keeps `PAYMENT_DONE = 1`; a `succeeded` refund sets `PAYMENT_DONE = 2`. Refund/reject actions are owner-initiated admin actions and must not create admin `business_notification` rows; customer-facing refund/rejection notifications belong in the separate `foodeez.ch` customer app.
 - Dashboard and Orders revenue KPIs use `countsAsRevenue` from `src/lib/orderStatus.ts`; rejected orders, refunded/failed payments, and orders with `STRIPE_REFUND_STATUS` do not count toward revenue totals.
 - Orders list filtering must not apply a default date range. The default route/UI state should show all existing orders unless `dateFrom`/`dateTo` are explicitly supplied.
-- Orders `dateFrom`/`dateTo` accept date-only values for dashboard calendar filters and full ISO timestamps for clients that send exact timezone-aware boundaries; do not round ISO timestamps to the server day.
-- `src/services/orders-management.ts` logs the raw Prisma `where` clause and distinct raw `ORDER_STATUS` values in development mode; keep that logging when working on order data bugs.
+- Orders `dateFrom`/`dateTo` accept full ISO timestamps (used exactly, never rounded to the server day) and date-only values, which mean the Europe/Zurich calendar day via `zurichDayRange` in `src/lib/pos-date-range.ts`. Never cut days at server midnight: Vercel runs in UTC. `AdminOrdersPage` sends exact local-day instants through `localDayIsoRange`, the same helper the POS uses, and the "revenue today" KPI uses the Zurich day.
+- Do not add debug-only queries or logging to `listOrders`; it runs on every orders poll.
 - Order status, rejection, ETA, payment, and refund mutations create idempotent `customer_order_notification` events inside the same database transaction as the order write. Notification ownership uses `VISITORS_ACCOUNT_ID` (sourced from `business_order.VISITOR_ID`). Keep event keys and snapshot metadata compatible with `foodeez.ch/frontend/src/lib/customer-notifications.ts`; the customer app owns listing and read state.
 - The selected-business dashboard recent-orders table uses the same order status mapping through `src/services/admin-data.ts`; `ORDER_STATUS = 4` means rejected.
 - `business_settings.DELIVERY_RANGE_ZIP_CODES` is retained for backward compatibility. New delivery-zone work should prefer `DELIVERY_ZONES_JSON`, with `DELIVERY_ENABLED`, `PICKUP_ENABLED`, `PICKUP_INSTRUCTIONS`, `DEFAULT_PICKUP_PREP_MINUTES`, and `DEFAULT_DELIVERY_PREP_MINUTES` for fulfillment settings.
@@ -255,7 +255,7 @@ Product-management components:
 - Product images use the real schema field `business_product.PIC`, mapped by `src/services/admin-data.ts` to `AdminProductRow.imageUrl`. Product table thumbnails should use that `imageUrl` alias with `resolveMediaUrl`, rounded 40-48px object-cover display, product-title alt text, and a placeholder fallback.
 - Product category display/filtering in `AdminProductsTable` is inferred from overlapping product tags and category tags because `business_product` does not have a direct category foreign key.
 - `CategoryTable` and `TagsTable` are current selected-business client islands for category/tag management and expect server-provided rows from `menu-management.ts`.
-- `ProductTable`, `DeleteProductModal`, and the legacy root `/api/products` flows remain older product-management surfaces; prefer `AdminProductsTable` and dashboard-scoped APIs for current selected-business work.
+- `AdminProductsTable` and the dashboard-scoped product APIs are the only product-management surfaces; the older `ProductTable`/`DeleteProductModal` flow was removed.
 - `ProductForm` and `CategoryForm` are reusable add/edit forms controlled by a `mode` prop and `initialValues`.
 - `ProductForm` can receive `categoryOptions`; category assignment is implemented by adding the selected category's tags to the product's tag assignments.
 - `TagSelect` is used by product/category forms to attach tags and loads tags from `/api/dashboard/[businessId]/tags`.
@@ -325,7 +325,7 @@ Orders-management components:
 - When adding product category behavior, remember that categories are not directly linked from `business_product`; check `prisma/schema.prisma` and the current tag-inference approach before changing assumptions.
 - For media changes, use the existing upload utilities and S3 storage helpers.
 - For new dashboard sections, follow the selected-business route structure under `src/app/dashboard/[businessId]`.
-- Run focused regression coverage with `npm.cmd test`; it includes owner/business isolation, inventory reservation/finalization/release, request-id schema contracts, POS input/receipt behavior, and browser-local date boundaries.
+- Run focused regression coverage with `npm.cmd test`; `pretest` runs `prisma generate` first because tests import the gitignored generated client (it needs no database connection). Coverage includes owner/business isolation, inventory reservation, concurrent finalization and release, request-id schema contracts, POS input/receipt behavior, reset-password input validation, browser-local date boundaries, and Zurich day ranges across DST.
 
 ## Super Admin, Onboarding and Marketing (2026-11-17)
 
@@ -335,7 +335,7 @@ Orders-management components:
 - Requests (`src/services/platform-onboarding.ts`): registrations and claims come from foodeez.ch. Approval runs in one transaction: claim the request, find or create the account's `business_owner`, create the `business_owner_2_business` link, put a registration live, reject other open claims. A restaurant owned by someone else is refused. Approval and rejection email the person through `src/lib/email.ts`; a failed email does not undo the decision.
 - Marketing is ported from Zambiel (`src/lib/marketing.ts`, `src/services/marketing-campaigns.ts`). Audiences: restaurants (`business.EMAIL_ADDRESS`, filters for unclaimed, live, town, and not emailed in N days) or `foodeez_subscription`. A campaign is sent in batches of at most `MAX_SEND_BATCH` (300) new addresses, and the first batch locks its content. Resend batches of 100 use idempotency keys and are resumable. `email_suppression` is re-checked before every batch; never send from the saved recipient list alone. Content is sanitised on save (no images yet).
 - Unsubscribe is public: `/unsubscribe` shows a button and `/api/marketing/unsubscribe` accepts RFC 8058 one-click POSTs. The signed token names a recipient row, never the email. A GET never unsubscribes.
-- Auth: sign-in and forgot-password are rate-limited through the shared `checkout_rate_limit` table (`src/lib/rate-limit.ts`, keys prefixed `admin-`). Reset tokens must pass `isResetToken`. Password sessions carry a fingerprint and end within 10 minutes of a password change, as on the customer site.
+- Auth: sign-in and forgot-password are rate-limited through the shared `checkout_rate_limit` table (`src/lib/rate-limit.ts`, keys prefixed `admin-`). Reset tokens must pass `isResetToken`. Request-body values that reach a Prisma `where` must be type-checked as strings or numbers first: a JSON object such as `{ "not": "" }` becomes a Prisma filter and matches other rows. Password sessions carry a fingerprint and end within 10 minutes of a password change, as on the customer site.
 - Env: `EMAIL_FROM` (verified Resend domain), `CUSTOMER_SITE_URL` (default https://foodeez.ch), optional `MARKETING_TOKEN_SECRET` (falls back to `NEXTAUTH_SECRET`; changing it breaks links already sent). `.env.example` is gitignored in this repository.
 
 ## Reservations and Email Verification (2026-11-20)
