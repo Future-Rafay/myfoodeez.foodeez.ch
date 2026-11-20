@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import crypto from 'crypto';
 import { Resend } from 'resend';
+import { EMAIL_FORM_LIMITS, rateLimitResponse } from '@/lib/rate-limit';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -16,7 +17,8 @@ async function sendPasswordResetEmail(to: string, resetUrl: string) {
 
 export async function POST(request: Request) {
   try {
-    const { email } = await request.json();
+    const body = await request.json();
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
 
     if (!email) {
       return NextResponse.json(
@@ -24,6 +26,9 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    const limited = await rateLimitResponse(request.headers, 'forgot-password', email, EMAIL_FORM_LIMITS);
+    if (limited) return limited;
 
     // Check if user exists
     const user = await prisma.visitors_account.findUnique({
