@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { syncAvailableInventory } from "@/lib/inventory";
 import prisma from "@/lib/prisma";
 
 export type EntityStatus = "active" | "inactive";
@@ -346,7 +347,6 @@ function normalizeProductValues(values: {
   compare_as_price?: unknown;
   track_inventory?: unknown;
   inventory_on_hand?: unknown;
-  inventory_commited?: unknown;
   weight?: unknown;
   weight_unit?: unknown;
   pic?: unknown;
@@ -372,9 +372,6 @@ function normalizeProductValues(values: {
     values.track_inventory === "true" ||
     values.track_inventory === 1 ||
     values.track_inventory === "1";
-  const committed = trackInventory
-    ? parseWholeNumberInput(values.inventory_commited, "Committed inventory")
-    : 0;
   const onHand = trackInventory
     ? parseWholeNumberInput(values.inventory_on_hand, "Stock quantity")
     : 0;
@@ -387,8 +384,8 @@ function normalizeProductValues(values: {
     compareAtPrice,
     trackInventory,
     inventoryOnHand: onHand,
-    inventoryAvailable: trackInventory ? Math.max(onHand - committed, 0) : 0,
-    inventoryCommitted: committed,
+    // Committed stock is owned by order reservations, never by the product form.
+    inventoryAvailable: onHand,
     weight: parseWholeNumberInput(values.weight, "Weight"),
     weightUnit: normalizeWeightUnit(values.weight_unit),
     pic: String(values.pic || "").trim() || null,
@@ -1079,7 +1076,7 @@ export async function createMenuProduct(
         TRACK_INVENTORY: normalized.trackInventory ? 1 : 0,
         INVENTORY_ON_HAND: normalized.inventoryOnHand,
         INVENTORY_AVAILABLE: normalized.inventoryAvailable,
-        INVENTORY_COMMITED: normalized.inventoryCommitted,
+        INVENTORY_COMMITED: 0,
         WEIGHT: normalized.weight,
         WEIGHT_UNIT: normalized.weightUnit,
         PIC: normalized.pic,
@@ -1148,14 +1145,13 @@ export async function updateMenuProduct(
         COMPARE_AS_PRICE: normalized.compareAtPrice,
         TRACK_INVENTORY: normalized.trackInventory ? 1 : 0,
         INVENTORY_ON_HAND: normalized.inventoryOnHand,
-        INVENTORY_AVAILABLE: normalized.inventoryAvailable,
-        INVENTORY_COMMITED: normalized.inventoryCommitted,
         WEIGHT: normalized.weight,
         WEIGHT_UNIT: normalized.weightUnit,
         PIC: normalized.pic,
         ...(nextStatus !== null ? { STATUS: nextStatus } : {}),
       },
     });
+    await syncAvailableInventory(tx, productId);
 
     await tx.business_product_2_tag.deleteMany({
       where: { BUSINESS_PRODUCT_ID: productId },
@@ -1171,7 +1167,9 @@ export async function updateMenuProduct(
       });
     }
 
-    return product;
+    return tx.business_product.findUniqueOrThrow({
+      where: { BUSINESS_PRODUCT_ID: product.BUSINESS_PRODUCT_ID },
+    });
   });
 }
 

@@ -12,6 +12,23 @@ type OrderItem = {
 
 export class InventoryUnavailableError extends Error {}
 
+// Recomputes available stock from the row's live committed count, so a product edit
+// never overwrites units reserved by open orders after the form was loaded.
+export async function syncAvailableInventory(
+  tx: Pick<PrismaClient, "$executeRaw">,
+  productId: number
+) {
+  await tx.$executeRaw`
+    UPDATE business_product
+    SET INVENTORY_AVAILABLE = IF(
+      TRACK_INVENTORY = 1,
+      GREATEST(COALESCE(INVENTORY_ON_HAND, 0) - COALESCE(INVENTORY_COMMITED, 0), 0),
+      0
+    )
+    WHERE BUSINESS_PRODUCT_ID = ${productId}
+  `;
+}
+
 export async function consumeImmediateSaleInventory(
   tx: InventoryTx,
   businessId: number,

@@ -9,6 +9,7 @@ import {
   normalizeOrderStatus,
   type OrderStatusName,
 } from "@/lib/orderStatus";
+import { syncAvailableInventory } from "@/lib/inventory";
 import { getDisplayOrderNumber } from "@/lib/orderNumber";
 import prisma from "@/lib/prisma";
 import { S3Storage } from "@/lib/s3-storage";
@@ -382,13 +383,9 @@ export async function saveProduct(values: ProductFormValues) {
   }
 
   const trackInventory = values.track_inventory === true;
-  const committed = trackInventory
-    ? parseWholeNumber(values.inventory_commited, "Committed inventory")
-    : 0;
   const onHand = trackInventory
     ? parseWholeNumber(values.inventory_on_hand, "Stock quantity")
     : 0;
-  const available = trackInventory ? Math.max(onHand - committed, 0) : 0;
   const weight = parseWholeNumber(values.weight, "Weight");
 
   const explicitTagIds = Array.from(new Set(values.tag_ids));
@@ -441,8 +438,6 @@ export async function saveProduct(values: ProductFormValues) {
     COMPARE_AS_PRICE: compareAtPrice,
     TRACK_INVENTORY: trackInventory ? 1 : 0,
     INVENTORY_ON_HAND: onHand,
-    INVENTORY_AVAILABLE: available,
-    INVENTORY_COMMITED: committed,
     WEIGHT: weight,
     WEIGHT_UNIT: normalizeWeightUnit(values.weight_unit),
     PIC: values.pic.trim() || null,
@@ -462,6 +457,7 @@ export async function saveProduct(values: ProductFormValues) {
         where: { BUSINESS_PRODUCT_ID: values.id },
         data: productData,
       });
+      await syncAvailableInventory(tx, values.id);
 
       await tx.business_product_2_tag.deleteMany({
         where: { BUSINESS_PRODUCT_ID: values.id },
@@ -472,7 +468,7 @@ export async function saveProduct(values: ProductFormValues) {
       }
     } else {
       const createdProduct = await tx.business_product.create({
-        data: productData,
+        data: { ...productData, INVENTORY_AVAILABLE: onHand, INVENTORY_COMMITED: 0 },
       });
 
       values.id = createdProduct.BUSINESS_PRODUCT_ID;
