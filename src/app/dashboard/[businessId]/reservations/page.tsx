@@ -36,7 +36,7 @@ export default async function ReservationsPage({
 
   return (
     <>
-      <PageHeader title="Reservations" description="Table requests from foodeez.ch. Confirm or decline each one; the guest gets an email with your answer." />
+      <PageHeader level="h2" title="Reservations" description="Table requests from foodeez.ch. Confirm or decline each one; the guest gets an email with your answer." />
       {done ? <p role="status" className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">{done}</p> : null}
       {error ? <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
       <FilterTabs

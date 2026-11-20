@@ -2,11 +2,13 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { PLATFORM_PAGE_SIZE } from "@/services/platform-data";
 
-export function PageHeader({ title, description, children }: { title: string; description?: string; children?: React.ReactNode }) {
+/** `level="h2"` inside the restaurant dashboard, whose header already renders the page h1. */
+export function PageHeader({ title, description, children, level = "h1" }: { title: string; description?: string; children?: React.ReactNode; level?: "h1" | "h2" }) {
+  const Heading = level;
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-950">{title}</h1>
+        <Heading className="text-2xl font-semibold text-gray-950">{title}</Heading>
         {description ? <p className="mt-1 text-sm text-gray-600">{description}</p> : null}
       </div>
       {children}
