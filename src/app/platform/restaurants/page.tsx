@@ -2,7 +2,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import ConfirmActionButton from "@/components/platform/ConfirmActionButton";
 import { EmptyState, FilterTabs, PageHeader, Pagination, SearchForm, StatusPill, formatDate } from "@/components/platform/PlatformUi";
 import { listRestaurants, parsePage, parseSearch, type RestaurantFilter } from "@/services/platform-data";
-import { restaurantProfileUrl } from "@/lib/customer-site";
+import Link from "next/link";
 import { setRestaurantApproval, setRestaurantStatus } from "../actions";
 
 const FILTERS: { value: RestaurantFilter; label: string }[] = [
@@ -48,9 +48,9 @@ export default async function PlatformRestaurantsPage({ searchParams }: { search
               {rows.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell>
-                    <a href={restaurantProfileUrl(row.name, row.id)} target="_blank" rel="noreferrer" className="font-medium text-gray-950 hover:text-foodeez-primary hover:underline">
+                    <Link href={`/platform/restaurants/${row.id}`} className="font-medium text-gray-950 hover:text-foodeez-primary hover:underline">
                       {row.name}
-                    </a>
+                    </Link>
                     <p className="text-xs text-gray-500">
                       #{row.id}
                       {row.town ? ` · ${row.town}` : ""}
