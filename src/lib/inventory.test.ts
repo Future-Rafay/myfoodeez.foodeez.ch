@@ -101,9 +101,10 @@ test("inventory reservation is business-scoped and rejects competing reservation
   assert.deepEqual({ available, committed }, { available: 0, committed: 1 });
 });
 
-test("inventory finalization consumes the reserved stock", async () => {
+test("inventory finalization consumes reserved stock with relative updates", async () => {
+  // Mimics the SQL: both columns drop by the quantity, floored at 0, without a prior read.
   let onHand = 10;
-  let committed = 2;
+  let committed = 3;
   const db = {
     business_order: {
       findUnique: async () => ({ INVENTORY_RELEASED_DATETIME: null }),
@@ -111,21 +112,23 @@ test("inventory finalization consumes the reserved stock", async () => {
     business_order_detail: {
       findMany: async () => [{ BUSINESS_PRODUCT_ID: 11, ORDER_QUANTITY: 2 }],
     },
-    business_product: {
-      findFirst: async () => ({
-        BUSINESS_PRODUCT_ID: 11,
-        INVENTORY_ON_HAND: onHand,
-        INVENTORY_COMMITED: committed,
-      }),
-      update: async ({ data }: { data: { INVENTORY_ON_HAND: number; INVENTORY_COMMITED: number } }) => {
-        onHand = data.INVENTORY_ON_HAND;
-        committed = data.INVENTORY_COMMITED;
-      },
+    business_product: {},
+    $executeRaw: async (sql: TemplateStringsArray, quantity: number, _sameQuantity: number, productId: number) => {
+      assert.match(sql.join("?"), /COALESCE\(INVENTORY_ON_HAND, 0\) - \?/);
+      assert.match(sql.join("?"), /TRACK_INVENTORY = 1/);
+      assert.equal(productId, 11);
+      onHand = Math.max(onHand - quantity, 0);
+      committed = Math.max(committed - quantity, 0);
+      return 1;
     },
   };
 
-  await finalizeOrderInventory(db as never, 41);
-  assert.deepEqual({ onHand, committed }, { onHand: 8, committed: 0 });
+  // Two orders for the same product finishing concurrently both count.
+  await Promise.all([
+    finalizeOrderInventory(db as never, 41),
+    finalizeOrderInventory(db as never, 42),
+  ]);
+  assert.deepEqual({ onHand, committed }, { onHand: 6, committed: 0 });
 });
 
 test("inventory release is claimed once across retries", async () => {

@@ -15,6 +15,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { localDateInputValue, localDayIsoRange } from "@/lib/pos-date-range";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -129,11 +130,11 @@ const dateRangeOptions: { label: string; value: DateRangeFilter }[] = [
 ];
 
 function todayInputValue() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateInputValue();
 }
 
 function formatInputDate(date: Date) {
-  return date.toISOString().slice(0, 10);
+  return localDateInputValue(date);
 }
 
 function getDateRangeBounds(dateRange: DateRangeFilter) {
@@ -251,8 +252,9 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
     const rangeFrom = dateRange === "custom" ? dateFrom : presetBounds.dateFrom;
     const rangeTo = dateRange === "custom" ? dateTo : presetBounds.dateTo;
 
-    if (rangeFrom) params.set("dateFrom", rangeFrom);
-    if (rangeTo) params.set("dateTo", rangeTo);
+    // Send exact instants for the restaurant's local day, not UTC calendar dates.
+    if (rangeFrom) params.set("dateFrom", localDayIsoRange(rangeFrom).dateFrom);
+    if (rangeTo) params.set("dateTo", localDayIsoRange(rangeTo).dateTo);
 
     return params.toString();
   }, [dateFrom, dateRange, dateTo, page, search, status]);
