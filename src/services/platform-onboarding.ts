@@ -80,6 +80,8 @@ export async function approveOnboardingRequest(admin: PlatformAdmin, requestId: 
   const result = await prisma.$transaction(async (tx) => {
     const request = await tx.business_onboarding_request.findUnique({ where: { REQUEST_ID: requestId } });
     if (!request || request.STATUS !== "pending") throw new OnboardingError("This request is no longer waiting for review.");
+    // Lock the restaurant row: a second approval for the same restaurant waits here, then sees the first owner and is refused.
+    await tx.$queryRaw`SELECT BUSINESS_ID FROM business WHERE BUSINESS_ID = ${request.BUSINESS_ID} FOR UPDATE`;
 
     const businessId = BigInt(request.BUSINESS_ID);
     const accountId = Number(request.VISITORS_ACCOUNT_ID);

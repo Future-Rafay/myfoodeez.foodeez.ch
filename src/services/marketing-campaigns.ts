@@ -189,9 +189,11 @@ export async function sendCampaignBatch(admin: PlatformAdmin, input: { campaignI
   });
   if (!claimed.count) throw new CampaignError("This campaign is already sending. Wait for it to finish.");
 
+  let added = 0;
   try {
     const audience = campaign.AUDIENCE as Audience;
     const picked = await pickAudience(campaign.CAMPAIGN_ID, audience, input.filters, size);
+    added = picked.length;
     if (picked.length) {
       await prisma.marketing_campaign_recipient.createMany({
         data: picked.map((row) => ({ CAMPAIGN_ID: campaign.CAMPAIGN_ID, EMAIL: row.email, NAME: row.name?.slice(0, 255) ?? null, BUSINESS_ID: row.businessId, SUBSCRIPTION_ID: row.subscriptionId })),
@@ -202,9 +204,15 @@ export async function sendCampaignBatch(admin: PlatformAdmin, input: { campaignI
     await deliverPendingRecipients(campaign.CAMPAIGN_ID, deliver);
     return { added: picked.length };
   } finally {
+    // A batch that added nobody (or failed before adding anyone) leaves a draft editable and its first-send date unset.
+    const sentBefore = Boolean(campaign.SENT_DATETIME);
     await prisma.marketing_campaign.update({
       where: { CAMPAIGN_ID: campaign.CAMPAIGN_ID },
-      data: { STATUS: "sent", SENT_DATETIME: campaign.SENT_DATETIME ?? new Date(), UPDATED_DATETIME: new Date() },
+      data: {
+        STATUS: added || sentBefore ? "sent" : "draft",
+        SENT_DATETIME: campaign.SENT_DATETIME ?? (added ? new Date() : null),
+        UPDATED_DATETIME: new Date(),
+      },
     });
   }
 }
