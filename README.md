@@ -1,36 +1,31 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Foodeez Admin (myfoodeez.foodeez.ch)
 
-## Getting Started
+Restaurant owner dashboard and Super Admin panel for Foodeez: menus, products and stock, online orders and Stripe refunds, discounts, and the web POS. It shares one MySQL/MariaDB database with the customer site (`foodeez.ch`) and serves the API used by the `foodeez-pos` Android app.
 
-First, run the development server:
+Stack: Next.js App Router, TypeScript, Prisma (MariaDB adapter), NextAuth credentials, Tailwind CSS, deployed on Vercel.
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm.cmd install
+npx.cmd prisma generate
+npm.cmd run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Copy `.env.example` to `.env` and fill in the values (database, NextAuth, Stripe, Resend, S3). `.env.example` is gitignored, so ask for it.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Schema changes are hand-written SQL under `prisma/migrations` and `docs/sql`. Apply them manually, then run `npx prisma db pull` and `npx prisma generate`. Do not run `prisma migrate` against the shared database.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Checks
 
-## Learn More
+```bash
+npm.cmd test
+npm.cmd run lint
+npm.cmd run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+`npm test` generates the Prisma client first and needs no database.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Working on this repo
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Project rules, routes, data conventions and business logic are in [agents.md](agents.md). Read it before changing anything.
