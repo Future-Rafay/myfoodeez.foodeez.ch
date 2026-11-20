@@ -9,12 +9,9 @@ import {
   normalizeOrderStatus,
   type OrderStatusName,
 } from "@/lib/orderStatus";
-import { syncAvailableInventory } from "@/lib/inventory";
 import { getDisplayOrderNumber } from "@/lib/orderNumber";
 import prisma from "@/lib/prisma";
-import { S3Storage } from "@/lib/s3-storage";
-
-const storage = new S3Storage();
+import { createMenuProduct, updateMenuProduct } from "@/services/menu-management";
 
 export type AdminBusinessCard = {
   id: number;
@@ -98,33 +95,6 @@ function toNumber(value: unknown) {
   }
 
   return Number(value ?? 0);
-}
-
-function parseMoney(value: string | undefined, fieldName: string, required = false) {
-  const text = String(value ?? "").trim();
-
-  if (!text && !required) return 0;
-
-  const amount = Number(text);
-  if (!Number.isFinite(amount) || amount < 0) {
-    throw new Error(`${fieldName} must be 0 or more.`);
-  }
-
-  return text || "0";
-}
-
-function parseWholeNumber(value: string | undefined, fieldName: string) {
-  const amount = Number(String(value ?? "0").trim() || "0");
-
-  if (!Number.isInteger(amount) || amount < 0) {
-    throw new Error(`${fieldName} must be a whole number 0 or more.`);
-  }
-
-  return amount;
-}
-
-function normalizeWeightUnit(value: string | undefined) {
-  return ["gm", "kg", "ml", "l"].includes(value || "") ? value : "gm";
 }
 
 function formatCustomer(firstName?: string | null, lastName?: string | null) {
@@ -369,124 +339,16 @@ export async function getProductsAdminData(businessId: number) {
 }
 
 export async function saveProduct(values: ProductFormValues) {
-  await requireBusinessAccess(values.businessId);
-
-  if (!values.title.trim() || !values.product_price.trim()) {
-    throw new Error("Product name and price are required.");
+  // One write path: menu-management owns product validation, tags and inventory rules.
+  const { id, businessId, ...fields } = values;
+  if (id) {
+    await updateMenuProduct(businessId, id, fields);
+  } else {
+    await createMenuProduct(businessId, fields);
   }
 
-  const price = parseMoney(values.product_price, "Product price", true);
-  const costPrice = parseMoney(values.cost_price, "Cost price");
-  const compareAtPrice = parseMoney(values.compare_as_price, "Compare-at price");
-  if (Number(compareAtPrice) > 0 && Number(compareAtPrice) <= Number(price)) {
-    throw new Error("Compare-at price should be greater than product price.");
-  }
-
-  const trackInventory = values.track_inventory === true;
-  const onHand = trackInventory
-    ? parseWholeNumber(values.inventory_on_hand, "Stock quantity")
-    : 0;
-  const weight = parseWholeNumber(values.weight, "Weight");
-
-  const explicitTagIds = Array.from(new Set(values.tag_ids));
-  const categoryTagIds =
-    values.categoryId && Number.isInteger(values.categoryId)
-      ? (
-          await prisma.business_product_category_2_tag.findMany({
-            where: { BUSINESS_PRODUCT_CATEGORY_ID: values.categoryId },
-          })
-        )
-          .map((tag) => tag.BUSINESS_PRODUCT_TAG_ID)
-          .filter((tagId): tagId is number => tagId !== null)
-      : [];
-  const tagIds = Array.from(new Set([...explicitTagIds, ...categoryTagIds]));
-
-  if (values.categoryId) {
-    const category = await prisma.business_product_category.findFirst({
-      where: {
-        BUSINESS_PRODUCT_CATEGORY_ID: values.categoryId,
-        BUSINESS_ID: values.businessId,
-        STATUS: { not: -1 },
-      },
-    });
-
-    if (!category) {
-      throw new Error("Category not found.");
-    }
-  }
-
-  if (tagIds.length) {
-    const ownedTags = await prisma.business_product_tag.count({
-      where: {
-        BUSINESS_ID: values.businessId,
-        BUSINESS_PRODUCT_TAG_ID: { in: tagIds },
-        STATUS: { not: -1 },
-      },
-    });
-
-    if (ownedTags !== tagIds.length) {
-      throw new Error("One or more tags are invalid.");
-    }
-  }
-
-  const productData = {
-    BUSINESS_ID: values.businessId,
-    TITLE: values.title.trim(),
-    DESCRIPTION: values.description.trim(),
-    PRODUCT_PRICE: price,
-    COST_PRICE: costPrice,
-    COMPARE_AS_PRICE: compareAtPrice,
-    TRACK_INVENTORY: trackInventory ? 1 : 0,
-    INVENTORY_ON_HAND: onHand,
-    WEIGHT: weight,
-    WEIGHT_UNIT: normalizeWeightUnit(values.weight_unit),
-    PIC: values.pic.trim() || null,
-  };
-
-  await prisma.$transaction(async (tx) => {
-    if (values.id) {
-      const existingProduct = await tx.business_product.findUnique({
-        where: { BUSINESS_PRODUCT_ID: values.id },
-      });
-
-      if (!existingProduct || existingProduct.BUSINESS_ID !== values.businessId) {
-        throw new Error("Product not found.");
-      }
-
-      await tx.business_product.update({
-        where: { BUSINESS_PRODUCT_ID: values.id },
-        data: productData,
-      });
-      await syncAvailableInventory(tx, values.id);
-
-      await tx.business_product_2_tag.deleteMany({
-        where: { BUSINESS_PRODUCT_ID: values.id },
-      });
-
-      if (existingProduct.PIC && values.pic && existingProduct.PIC !== values.pic) {
-        await storage.delete(existingProduct.PIC).catch(console.error);
-      }
-    } else {
-      const createdProduct = await tx.business_product.create({
-        data: { ...productData, INVENTORY_AVAILABLE: onHand, INVENTORY_COMMITED: 0 },
-      });
-
-      values.id = createdProduct.BUSINESS_PRODUCT_ID;
-    }
-
-    if (values.id && tagIds.length) {
-      await tx.business_product_2_tag.createMany({
-        data: tagIds.map((tagId) => ({
-          BUSINESS_PRODUCT_ID: values.id,
-          BUSINESS_PRODUCT_TAG_ID: tagId,
-          CREATION_DATETIME: new Date(),
-        })),
-      });
-    }
-  });
-
-  revalidatePath(`/dashboard/${values.businessId}/menu/products`);
-  revalidatePath(`/dashboard/${values.businessId}`);
+  revalidatePath(`/dashboard/${businessId}/menu/products`);
+  revalidatePath(`/dashboard/${businessId}`);
 }
 
 export async function toggleProductStatus(

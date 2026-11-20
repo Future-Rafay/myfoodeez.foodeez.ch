@@ -2,6 +2,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { syncAvailableInventory } from "@/lib/inventory";
 import prisma from "@/lib/prisma";
+import { S3Storage } from "@/lib/s3-storage";
+
+const storage = new S3Storage();
 
 export type EntityStatus = "active" | "inactive";
 
@@ -314,7 +317,10 @@ function uniqueIds(values: unknown) {
 function parseMoneyInput(value: unknown, fieldName: string, required = false) {
   const text = String(value ?? "").trim();
 
-  if (!text && !required) return "0";
+  if (!text) {
+    if (required) throw new Error(`${fieldName} is required.`);
+    return "0";
+  }
 
   const amount = Number(text);
   if (!Number.isFinite(amount) || amount < 0) {
@@ -1120,7 +1126,7 @@ export async function updateMenuProduct(
   }
 ) {
   await requireMenuBusinessAccess(businessId);
-  await getOwnedProduct(businessId, productId);
+  const existingProduct = await getOwnedProduct(businessId, productId);
 
   const normalized = normalizeProductValues(values);
 
@@ -1134,7 +1140,7 @@ export async function updateMenuProduct(
   await assertTagsBelongToBusiness(businessId, tagIds);
   const nextStatus = statusCode(String(values.status || ""));
 
-  return prisma.$transaction(async (tx) => {
+  const updated = await prisma.$transaction(async (tx) => {
     const product = await tx.business_product.update({
       where: { BUSINESS_PRODUCT_ID: productId },
       data: {
@@ -1171,6 +1177,13 @@ export async function updateMenuProduct(
       where: { BUSINESS_PRODUCT_ID: product.BUSINESS_PRODUCT_ID },
     });
   });
+
+  // Remove the replaced image only after the new one is safely saved.
+  if (existingProduct.PIC && normalized.pic && existingProduct.PIC !== normalized.pic) {
+    await storage.delete(existingProduct.PIC).catch(console.error);
+  }
+
+  return updated;
 }
 
 export async function updateMenuProductStatus(
