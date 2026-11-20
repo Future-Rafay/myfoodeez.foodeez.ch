@@ -2,7 +2,7 @@ import type { PrismaClient } from "../../prisma/generated/prisma/client";
 
 type InventoryTx = Pick<
   PrismaClient,
-  "business_product" | "business_order" | "business_order_detail"
+  "business_product" | "business_order" | "business_order_detail" | "$executeRaw"
 >;
 
 type OrderItem = {
@@ -132,27 +132,14 @@ export async function finalizeOrderInventory(
     const quantity = detail.ORDER_QUANTITY || 0;
     if (quantity <= 0) continue;
 
-    const product = await tx.business_product.findFirst({
-      where: {
-        BUSINESS_PRODUCT_ID: detail.BUSINESS_PRODUCT_ID,
-        TRACK_INVENTORY: 1,
-      },
-      select: {
-        BUSINESS_PRODUCT_ID: true,
-        INVENTORY_ON_HAND: true,
-        INVENTORY_COMMITED: true,
-      },
-    });
-
-    if (!product) continue;
-
-    await tx.business_product.update({
-      where: { BUSINESS_PRODUCT_ID: product.BUSINESS_PRODUCT_ID },
-      data: {
-        INVENTORY_ON_HAND: Math.max((product.INVENTORY_ON_HAND ?? 0) - quantity, 0),
-        INVENTORY_COMMITED: Math.max((product.INVENTORY_COMMITED ?? 0) - quantity, 0),
-      },
-    });
+    // One relative UPDATE so two orders finishing at once cannot overwrite each other.
+    await tx.$executeRaw`
+      UPDATE business_product
+      SET INVENTORY_ON_HAND = GREATEST(COALESCE(INVENTORY_ON_HAND, 0) - ${quantity}, 0),
+          INVENTORY_COMMITED = GREATEST(COALESCE(INVENTORY_COMMITED, 0) - ${quantity}, 0)
+      WHERE BUSINESS_PRODUCT_ID = ${detail.BUSINESS_PRODUCT_ID}
+        AND TRACK_INVENTORY = 1
+    `;
   }
 }
 
