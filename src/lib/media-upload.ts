@@ -48,20 +48,3 @@ export async function uploadImagesToS3(images: File[]): Promise<string[]> {
   }
   return urls;
 }
-
-export async function uploadVideoToS3(video: File): Promise<string | null> {
-  const formData = new FormData();
-  formData.append("file", video);
-
-  const res = await fetch("/api/upload", {
-    method: "POST",
-    body: formData,
-  });
-
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || "Video upload failed");
-  }
-
-  return data?.url ?? null;
-}

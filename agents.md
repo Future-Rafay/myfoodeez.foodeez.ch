@@ -76,9 +76,7 @@ Existing API routes:
 - `/api/auth/forgot-password`: forgot-password handler.
 - `/api/auth/reset-password`: reset-password handler.
 - `/api/upload`: authenticated image upload route.
-- `/api/products`: legacy product CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped product routes below.
-- `/api/categories`: legacy category CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped category routes below.
-- `/api/tags`: legacy tag CRUD route with business-owner authorization. Current selected-business menu UI should prefer the dashboard-scoped tag routes below.
+- The legacy root `/api/products`, `/api/categories`, and `/api/tags` CRUD routes were removed (no callers in this repo, foodeez.ch, or foodeez-pos). Use the dashboard-scoped routes below.
 - `/api/dashboard/[businessId]/products`: authenticated selected-business Product list/create route. Supports search, category, status, page, and pageSize filters. Returns paginated product rows with tag/category shaping plus pricing, inventory, weight, and image fields.
 - `/api/dashboard/[businessId]/products/[id]`: authenticated selected-business Product update/delete route. `PATCH` updates full product data, including `COST_PRICE`, `COMPARE_AS_PRICE`, inventory fields, `WEIGHT`, `WEIGHT_UNIT`, `PIC`, or status-only payloads; `DELETE` soft-deletes by status.
 - `/api/pos/context`: authenticated POS bootstrap route. Returns the signed-in user plus only their active businesses and the identity/contact fields needed by the device restaurant chooser and receipts.
@@ -255,7 +253,7 @@ Product-management components:
 - Product images use the real schema field `business_product.PIC`, mapped by `src/services/admin-data.ts` to `AdminProductRow.imageUrl`. Product table thumbnails should use that `imageUrl` alias with `resolveMediaUrl`, rounded 40-48px object-cover display, product-title alt text, and a placeholder fallback.
 - Product category display/filtering in `AdminProductsTable` is inferred from overlapping product tags and category tags because `business_product` does not have a direct category foreign key.
 - `CategoryTable` and `TagsTable` are current selected-business client islands for category/tag management and expect server-provided rows from `menu-management.ts`.
-- `ProductTable`, `DeleteProductModal`, and the legacy root `/api/products` flows remain older product-management surfaces; prefer `AdminProductsTable` and dashboard-scoped APIs for current selected-business work.
+- `AdminProductsTable` and the dashboard-scoped product APIs are the only product-management surfaces; the older `ProductTable`/`DeleteProductModal` flow was removed.
 - `ProductForm` and `CategoryForm` are reusable add/edit forms controlled by a `mode` prop and `initialValues`.
 - `ProductForm` can receive `categoryOptions`; category assignment is implemented by adding the selected category's tags to the product's tag assignments.
 - `TagSelect` is used by product/category forms to attach tags and loads tags from `/api/dashboard/[businessId]/tags`.
