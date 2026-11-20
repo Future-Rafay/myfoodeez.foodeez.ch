@@ -55,6 +55,8 @@ export async function POST(req: Request) {
                 RESET_TOKEN: null,
                 // Marks this password as set by the email's owner; the customer site's googleAccountUpdate keeps it.
                 RESET_TOKEN_EXPIRY: new Date(),
+                // The reset link reached this inbox, so the email is confirmed too.
+                EMAIL_VERIFIED_DATETIME: user.EMAIL_VERIFIED_DATETIME ?? new Date(),
             },
         });
 

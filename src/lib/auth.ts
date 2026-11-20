@@ -85,6 +85,11 @@ export const authOptions: NextAuthOptions = {
           throw new Error("Invalid credentials");
         }
 
+        // Same rule as foodeez.ch: new password accounts confirm their email there before signing in anywhere.
+        if (!user.EMAIL_VERIFIED_DATETIME) {
+          throw new Error("Please confirm your email first, using the link sent when you signed up on foodeez.ch.");
+        }
+
         return {
           id: user.VISITORS_ACCOUNT_ID.toString(),
           name: `${user.FIRST_NAME} ${user.LAST_NAME}`,

@@ -337,3 +337,9 @@ Orders-management components:
 - Unsubscribe is public: `/unsubscribe` shows a button and `/api/marketing/unsubscribe` accepts RFC 8058 one-click POSTs. The signed token names a recipient row, never the email. A GET never unsubscribes.
 - Auth: sign-in and forgot-password are rate-limited through the shared `checkout_rate_limit` table (`src/lib/rate-limit.ts`, keys prefixed `admin-`). Reset tokens must pass `isResetToken`. Password sessions carry a fingerprint and end within 10 minutes of a password change, as on the customer site.
 - Env: `EMAIL_FROM` (verified Resend domain), `CUSTOMER_SITE_URL` (default https://foodeez.ch), optional `MARKETING_TOKEN_SECRET` (falls back to `NEXTAUTH_SECRET`; changing it breaks links already sent). `.env.example` is gitignored in this repository.
+
+## Reservations and Email Verification (2026-11-20)
+
+- `/dashboard/[businessId]/reservations` lists upcoming and past `reserve_table` rows by Swiss date (`zurichToday`) for the signed-in owner (`requireBusinessAccess`). Confirm or decline only changes a waiting row of that restaurant (`STATUS` 1 → 2 confirmed / 3 declined) and emails the guest; declining asks first. Both live in `src/services/reservations-management.ts`.
+- Password sign-in refuses accounts whose `visitors_account.EMAIL_VERIFIED_DATETIME` is null (manual `20261120000000_add_email_verification` migration; existing accounts are backfilled as verified). Accounts confirm their email on foodeez.ch; a completed password reset here also confirms it. The sign-in page shows only the rate-limit and confirm-email server messages verbatim.
+- Approving an onboarding request locks the `business` row first (`SELECT ... FOR UPDATE`) so parallel approvals cannot create two owners.
