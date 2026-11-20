@@ -20,7 +20,9 @@ import {
   finalizeOrderInventory,
   releaseOrderInventory,
 } from "@/lib/inventory";
+import { swissDate } from "@/lib/discounts";
 import { getDisplayOrderNumber } from "@/lib/orderNumber";
+import { zurichDayRange } from "@/lib/pos-date-range";
 import prisma from "@/lib/prisma";
 
 export type NormalizedOrderStatus = OrderStatusName;
@@ -183,18 +185,6 @@ function unique<T>(items: T[]) {
   return Array.from(new Set(items));
 }
 
-function startOfDay(value: Date) {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function endOfDay(value: Date) {
-  const date = new Date(value);
-  date.setHours(23, 59, 59, 999);
-  return date;
-}
-
 function parseStatusFilter(status: string | null | undefined) {
   if (!status || status === "all") return null;
 
@@ -220,7 +210,13 @@ function parseDate(value: string | null | undefined, boundary: "start" | "end") 
   // ISO timestamps already carry the caller's exact timezone boundary.
   if (value.includes("T")) return date;
 
-  return boundary === "start" ? startOfDay(date) : endOfDay(date);
+  // Plain calendar dates mean the restaurant's Swiss day, not the server's UTC day.
+  try {
+    const range = zurichDayRange(value);
+    return boundary === "start" ? range.start : range.end;
+  } catch {
+    return null;
+  }
 }
 
 function buildAddress(order: {
@@ -405,8 +401,7 @@ function buildOrderWhere(params: ListOrdersParams) {
 }
 
 async function getOrdersKpis(businessId: number): Promise<OrdersKpis> {
-  const todayStart = startOfDay(new Date());
-  const todayEnd = endOfDay(new Date());
+  const { start: todayStart, end: todayEnd } = zurichDayRange(swissDate());
   const [statusCounts, revenue] = await Promise.all([
     prisma.business_order.groupBy({
       by: ["ORDER_STATUS"],
