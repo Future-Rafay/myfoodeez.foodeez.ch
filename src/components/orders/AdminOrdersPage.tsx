@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -232,6 +232,10 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
   const [toast, setToast] = useState<ToastState>(null);
   const [selectedOrder, setSelectedOrder] = useState<AdminOrderRow | null>(null);
   const [rejectOrder, setRejectOrder] = useState<AdminOrderRow | null>(null);
+  const [finishTarget, setFinishTarget] = useState<{
+    order: AdminOrderRow;
+    status: NormalizedOrderStatus;
+  } | null>(null);
   const [rejectionReason, setRejectionReason] = useState(REJECTION_REASONS[0]);
   const [rejectionNote, setRejectionNote] = useState("");
 
@@ -361,6 +365,22 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
       return false;
     } finally {
       setIsUpdating(false);
+    }
+  }
+
+  // Delivered and picked up are final (stock is taken off for good), so they ask first; other steps stay one tap.
+  function requestStatus(order: AdminOrderRow, nextStatus: NormalizedOrderStatus) {
+    if (nextStatus === "delivered" || nextStatus === "picked_up") {
+      setFinishTarget({ order, status: nextStatus });
+      return;
+    }
+    void updateStatus(order, nextStatus);
+  }
+
+  async function confirmFinish() {
+    if (!finishTarget) return;
+    if (await updateStatus(finishTarget.order, finishTarget.status)) {
+      setFinishTarget(null);
     }
   }
 
@@ -676,9 +696,14 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                               {getAllowedOrderActions(order).length > 0 && (
                                 <div className="my-1 h-px bg-gray-100" />
                               )}
-                              {getAllowedOrderActions(order).map((action) => (
+                              {getAllowedOrderActions(order).map((action, index, all) => (
+                                <Fragment key={action.status}>
+                                {action.variant === "destructive" &&
+                                  index > 0 &&
+                                  all[index - 1].variant !== "destructive" && (
+                                    <div className="my-1 h-px bg-gray-100" />
+                                  )}
                                 <DropdownMenuItem
-                                  key={action.status}
                                   disabled={isUpdating}
                                   className={cn(
                                     action.variant === "destructive" &&
@@ -690,11 +715,12 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                                       return;
                                     }
 
-                                    void updateStatus(order, action.status);
+                                    requestStatus(order, action.status);
                                   }}
                                 >
                                   {action.label}
                                 </DropdownMenuItem>
+                                </Fragment>
                               ))}
 
                             </DropdownMenuContent>
@@ -755,7 +781,7 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
         isSavingEta={isSavingEta}
         isMarkingPaid={isMarkingPaid}
         onClose={() => setSelectedOrder(null)}
-        onUpdateStatus={updateStatus}
+        onUpdateStatus={requestStatus}
         onSaveEta={(order, eta) => saveEta(order, eta)}
         onMarkPaid={(order) => markPaid(order)}
         onReject={(order) => setRejectOrder(order)}
@@ -769,6 +795,12 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
         onNoteChange={setRejectionNote}
         onClose={() => setRejectOrder(null)}
         onConfirm={() => void confirmReject()}
+      />
+      <FinishOrderModal
+        target={finishTarget}
+        isUpdating={isUpdating}
+        onClose={() => setFinishTarget(null)}
+        onConfirm={() => void confirmFinish()}
       />
     </div>
   );
@@ -888,6 +920,54 @@ function MoneyLine({
   );
 }
 
+function FinishOrderModal({
+  target,
+  isUpdating,
+  onClose,
+  onConfirm,
+}: {
+  target: { order: AdminOrderRow; status: NormalizedOrderStatus } | null;
+  isUpdating: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!target) return null;
+  const { order, status } = target;
+  const label = status === "picked_up" ? "picked up" : "delivered";
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            Mark order {orderNumberLabel(order)} as {label}?
+          </DialogTitle>
+          <DialogDescription>
+            This completes the order and takes its items out of stock for good. It cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        {Number(order.PAYMENT_DONE) === 0 && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            This order is still unpaid. Mark the cash payment as paid separately in the order details.
+          </p>
+        )}
+        <DialogFooter className="sm:justify-between">
+          <Button variant="outline" onClick={onClose} disabled={isUpdating} autoFocus>
+            Cancel
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={isUpdating}
+            className="bg-foodeez-primary text-white hover:bg-foodeez-secondary"
+          >
+            {isUpdating ? "Saving..." : `Mark as ${label}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function RejectOrderModal({
   order,
   isUpdating,
@@ -990,7 +1070,7 @@ function OrderDetailsModal({
   onUpdateStatus: (
     order: AdminOrderRow,
     status: NormalizedOrderStatus
-  ) => Promise<unknown>;
+  ) => unknown;
   onSaveEta: (order: AdminOrderRow, eta: string) => Promise<void>;
   onMarkPaid: (order: AdminOrderRow) => Promise<void>;
   onReject: (order: AdminOrderRow) => void;
@@ -1208,29 +1288,22 @@ function OrderDetailsModal({
           </Table>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex-col sm:flex-col">
           <div className="w-full flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 
             <div className="mt-4 flex flex-wrap gap-2">
-              {actions.map((action) => (
-                <Button
-                  key={action.status}
-                  disabled={isUpdating}
-                  variant={action.variant === "destructive" ? "destructive" : "default"}
-                  onClick={() =>
-                    action.status === "rejected"
-                      ? onReject(order)
-                      : onUpdateStatus(order, action.status)
-                  }
-                  className={cn(
-                    action.variant !== "destructive" &&
-                    "bg-foodeez-primary text-white hover:bg-foodeez-secondary"
-                  )}
-                >
-                  {action.label}
-                </Button>
-              ))}
-             
+              {actions
+                .filter((action) => action.variant !== "destructive")
+                .map((action) => (
+                  <Button
+                    key={action.status}
+                    disabled={isUpdating}
+                    onClick={() => onUpdateStatus(order, action.status)}
+                    className="bg-foodeez-primary text-white hover:bg-foodeez-secondary"
+                  >
+                    {action.label}
+                  </Button>
+                ))}
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               {canEditEta && (
@@ -1259,6 +1332,27 @@ function OrderDetailsModal({
               </Button>
             </div>
           </div>
+          {/* Kept on its own row, away from routine status buttons, so it is not tapped by accident. */}
+          {actions.some((action) => action.variant === "destructive") && (
+            <div className="flex w-full flex-wrap gap-2 border-t border-gray-100 pt-4">
+              {actions
+                .filter((action) => action.variant === "destructive")
+                .map((action) => (
+                  <Button
+                    key={action.status}
+                    variant="destructive"
+                    disabled={isUpdating}
+                    onClick={() =>
+                      action.status === "rejected"
+                        ? onReject(order)
+                        : onUpdateStatus(order, action.status)
+                    }
+                  >
+                    {action.label}
+                  </Button>
+                ))}
+            </div>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog >
