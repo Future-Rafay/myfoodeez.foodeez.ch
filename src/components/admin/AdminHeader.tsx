@@ -31,6 +31,8 @@ function humanizeSegment(segment: string) {
     return `#${segment}`;
   }
 
+  if (segment === "pos") return "POS";
+
   return segment
     .replace(/-/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());

@@ -1,9 +1,7 @@
 /* eslint-disable @next/next/no-img-element -- review media are arbitrary S3 URLs shown as small previews */
-import Link from "next/link";
 import ConfirmActionButton from "@/components/platform/ConfirmActionButton";
-import { EmptyState, PageHeader, Pagination, formatDate } from "@/components/platform/PlatformUi";
+import { EmptyState, FilterTabs, PageHeader, Pagination, formatDate } from "@/components/platform/PlatformUi";
 import { resolveMediaUrl } from "@/lib/media";
-import { cn } from "@/lib/utils";
 import { listPendingContent, parsePage, type ModerationKind } from "@/services/platform-data";
 import { moderateContent } from "../actions";
 
@@ -22,20 +20,11 @@ export default async function PlatformModerationPage({ searchParams }: { searchP
   return (
     <>
       <PageHeader title="Moderation" description="New and edited reviews and stories stay hidden on foodeez.ch until they are approved here. The oldest are shown first." />
-      <div className="mb-4 flex flex-wrap gap-2">
-        {TABS.map((tab) => (
-          <Link
-            key={tab.value}
-            href={`/platform/moderation?kind=${tab.value}`}
-            className={cn(
-              "rounded-full border px-3 py-1 text-sm font-medium",
-              kind === tab.value ? "border-foodeez-primary bg-foodeez-primary text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-            )}
-          >
-            {tab.label}
-          </Link>
-        ))}
-      </div>
+      <FilterTabs
+        label="Content types"
+        active={kind}
+        items={TABS.map((tab) => ({ value: tab.value, label: tab.label, href: `/platform/moderation?kind=${tab.value}` }))}
+      />
       {rows.length === 0 ? (
         <EmptyState>Nothing waiting. Everything has been moderated.</EmptyState>
       ) : (
@@ -51,8 +40,8 @@ export default async function PlatformModerationPage({ searchParams }: { searchP
                   <p className="mt-3 whitespace-pre-line break-words text-sm text-gray-700">{row.text}</p>
                   {row.media.length || row.video ? (
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {row.media.map((src) => (
-                        <a key={src} href={resolveMediaUrl(src) ?? src} target="_blank" rel="noreferrer">
+                      {row.media.map((src, index) => (
+                        <a key={src} href={resolveMediaUrl(src) ?? src} target="_blank" rel="noreferrer" aria-label={`Open photo ${index + 1} in a new tab`}>
                           <img src={resolveMediaUrl(src) ?? src} alt="" className="size-20 rounded-md border border-gray-200 object-cover" />
                         </a>
                       ))}

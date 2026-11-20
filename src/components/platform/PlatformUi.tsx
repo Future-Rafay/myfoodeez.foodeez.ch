@@ -24,6 +24,28 @@ export function StatusPill({ tone, children }: { tone: "green" | "amber" | "gray
   return <span className={cn("inline-flex rounded-md border px-2 py-0.5 text-xs font-medium", tones[tone])}>{children}</span>;
 }
 
+/** Link-based filter tabs shared by the list pages; tall enough to tap on a phone. */
+export function FilterTabs({ items, active, label }: { items: { value: string; label: string; href: string }[]; active: string; label: string }) {
+  return (
+    <nav aria-label={label} className="mb-4 flex flex-wrap gap-2">
+      {items.map((item) => (
+        <Link
+          key={item.value}
+          href={item.href}
+          aria-current={active === item.value ? "page" : undefined}
+          className={cn(
+            "inline-flex min-h-10 items-center rounded-full border px-4 text-sm font-medium transition-colors sm:min-h-9",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foodeez-primary/40 focus-visible:ring-offset-1",
+            active === item.value ? "border-foodeez-primary bg-foodeez-primary text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+          )}
+        >
+          {item.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
 /** GET search form: keeps the other query values as hidden fields. */
 export function SearchForm({ action, search, placeholder, hidden = {} }: { action: string; search: string; placeholder: string; hidden?: Record<string, string> }) {
   return (
