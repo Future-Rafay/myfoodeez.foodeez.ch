@@ -6,9 +6,10 @@ export async function POST(req: Request) {
     try {
         const { token, password } = await req.json();
 
-        if (!token || !password) {
+        // Objects would become Prisma filters (e.g. { not: "" }) and match any pending reset.
+        if (typeof token !== 'string' || !token || typeof password !== 'string' || password.length < 8) {
             return NextResponse.json(
-                { message: 'Token and password are required' },
+                { message: 'A valid token and a password of at least 8 characters are required' },
                 { status: 400 }
             );
         }
