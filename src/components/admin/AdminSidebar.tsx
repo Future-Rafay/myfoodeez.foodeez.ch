@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import {
   BadgePercent,
+  CalendarDays,
   ChevronDown,
   FolderKanban,
   LayoutDashboard,
@@ -42,6 +43,11 @@ export const adminNavItems = [
     label: "Discounts",
     href: "/discounts",
     icon: BadgePercent,
+  },
+  {
+    label: "Reservations",
+    href: "/reservations",
+    icon: CalendarDays,
   },
 ];
 
