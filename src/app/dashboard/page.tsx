@@ -1,7 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowRight, Building2, MapPin, Store } from "lucide-react";
+import { ArrowRight, Building2, MapPin, ShieldCheck, Store } from "lucide-react";
+import { AccountCard, LogoutButton } from "@/components/admin/AccountCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,12 +12,16 @@ import { getPlatformAdmin } from "@/lib/platform-admin";
 
 function PlatformLink() {
   return (
-    <Link
-      href="/platform"
-      className="inline-flex items-center rounded-md border border-foodeez-primary/30 bg-white px-3 py-1.5 text-sm font-medium text-foodeez-primary shadow-xs hover:bg-foodeez-primary/5"
+    <Button
+      asChild
+      variant="outline"
+      className="border-foodeez-primary/30 text-foodeez-primary hover:bg-foodeez-primary/5 hover:text-foodeez-primary"
     >
-      Super Admin
-    </Link>
+      <Link href="/platform" title="Super Admin">
+        <ShieldCheck className="size-4" />
+        <span className="hidden sm:inline">Super Admin</span>
+      </Link>
+    </Button>
   );
 }
 
@@ -46,11 +51,10 @@ export default async function DashboardRootPage() {
                 Your account is signed in, but it is not connected to a
                 Foodeez business owner profile yet.
               </p>
-              {platformAdmin ? (
-                <div className="mt-5">
-                  <PlatformLink />
-                </div>
-              ) : null}
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+                {platformAdmin ? <PlatformLink /> : null}
+                <LogoutButton />
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -71,14 +75,14 @@ export default async function DashboardRootPage() {
               priority
             />
           </Link>
-          <div className="flex items-center gap-3">
-          {platformAdmin ? <PlatformLink /> : null}
-          <Badge
-            variant="outline"
-            className="border-foodeez-primary/20 bg-foodeez-primary/5 text-foodeez-primary"
-          >
-            Admin
-          </Badge>
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            {platformAdmin ? <PlatformLink /> : null}
+            <AccountCard
+              role={platformAdmin ? "Super Admin" : "Owner"}
+              className="max-w-56"
+              detailsClassName="hidden sm:block"
+            />
+            <LogoutButton className="px-2 sm:px-3" labelClassName="hidden sm:inline" />
           </div>
         </div>
       </header>

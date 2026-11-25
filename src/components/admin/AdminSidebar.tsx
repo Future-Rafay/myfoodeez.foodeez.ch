@@ -4,14 +4,12 @@ import * as React from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
 import {
   BadgePercent,
   CalendarDays,
   ChevronDown,
   FolderKanban,
   LayoutDashboard,
-  LogOut,
   MonitorSmartphone,
   ReceiptText,
   Settings,
@@ -22,6 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { resolveMediaUrl } from "@/lib/media";
 import type { AdminBusinessIdentity } from "@/components/admin/AdminShell";
+import { AccountCard, LogoutButton, getInitials } from "@/components/admin/AccountCard";
 
 export const adminNavItems = [
   {
@@ -69,16 +68,12 @@ export default function AdminSidebar({
   collapseOnMedium = true,
 }: AdminSidebarProps) {
   const pathname = usePathname();
-  const { data: session } = useSession();
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const basePath = `/dashboard/${businessId}`;
   const isMenuRoute =
     pathname === `${basePath}/menu` || pathname.startsWith(`${basePath}/menu/`);
   const businessName = business?.name || restaurantName;
   const businessLogo = resolveMediaUrl(business?.logoUrl);
-  const ownerName = session?.user?.name || "Owner";
-  const ownerImage = resolveMediaUrl(session?.user?.image);
-  const ownerInitials = getInitials(ownerName);
   const menuItems = [
     {
       label: "Menu Cards",
@@ -315,59 +310,16 @@ export default function AdminSidebar({
       </nav>
 
       <div className="border-t border-gray-100 p-3">
-        <div className="mb-3 flex min-w-0 items-center gap-3 rounded-lg bg-gray-50 p-2">
-          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-indigo-600 text-sm font-semibold text-white">
-            {ownerImage ? (
-              <Image
-                src={ownerImage}
-                alt={ownerName}
-                fill
-                className="object-cover"
-                unoptimized={ownerImage.startsWith("http")}
-              />
-            ) : (
-              ownerInitials
-            )}
-          </div>
-          <div
-            className={cn(
-              "min-w-0",
-              collapseOnMedium ? "hidden lg:block" : "block"
-            )}
-          >
-            <p className="truncate text-sm font-semibold text-gray-950">
-              {truncateOwnerName(ownerName)}
-            </p>
-            <p className="text-xs text-gray-500">Owner</p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => signOut({ callbackUrl: "/" })}
-          className={cn(
-            "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50",
-            collapseOnMedium && "md:justify-center lg:justify-start"
-          )}
-          title="Logout"
-        >
-          <LogOut className="size-5 shrink-0" />
-          <span className={cn(collapseOnMedium ? "hidden lg:inline" : "inline")}>
-            Logout
-          </span>
-        </button>
+        <AccountCard
+          role="Owner"
+          className="mb-3"
+          detailsClassName={collapseOnMedium ? "hidden lg:block" : "block"}
+        />
+        <LogoutButton
+          className={cn("w-full", collapseOnMedium && "md:justify-center lg:justify-start")}
+          labelClassName={collapseOnMedium ? "hidden lg:inline" : "inline"}
+        />
       </div>
     </aside>
   );
-}
-
-function getInitials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "F";
-  const first = parts[0]?.[0] || "";
-  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] || "" : "";
-  return `${first}${last}`.toUpperCase();
-}
-
-function truncateOwnerName(name: string) {
-  return name.length > 12 ? `${name.slice(0, 12)}...` : name;
 }
