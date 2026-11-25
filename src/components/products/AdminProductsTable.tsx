@@ -29,6 +29,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -306,6 +307,7 @@ export default function AdminProductsTable({
                   />
                   <SortableHead
                     label="Category"
+                    className="hidden md:table-cell"
                     sortKey="categoryName"
                     activeKey={sortKey}
                     direction={sortDirection}
@@ -313,6 +315,7 @@ export default function AdminProductsTable({
                   />
                   <SortableHead
                     label="Price"
+                    className="hidden md:table-cell"
                     sortKey="price"
                     activeKey={sortKey}
                     direction={sortDirection}
@@ -320,6 +323,7 @@ export default function AdminProductsTable({
                   />
                   <SortableHead
                     label="Stock"
+                    className="hidden md:table-cell"
                     sortKey="stock"
                     activeKey={sortKey}
                     direction={sortDirection}
@@ -327,6 +331,7 @@ export default function AdminProductsTable({
                   />
                   <SortableHead
                     label="Status"
+                    className="hidden md:table-cell"
                     sortKey="status"
                     activeKey={sortKey}
                     direction={sortDirection}
@@ -350,11 +355,19 @@ export default function AdminProductsTable({
                               {product.description}
                             </p>
                           )}
+                          {/* Phones hide the other columns, so the essentials sit under the name. */}
+                          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-600 md:hidden">
+                            <span className="font-medium text-gray-950">
+                              {currencyFormatter.format(product.price)}
+                            </span>
+                            <span>{product.categoryName}</span>
+                            <ProductStatusBadge status={product.status} />
+                          </p>
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{product.categoryName}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">{product.categoryName}</TableCell>
+                    <TableCell className="hidden md:table-cell">
                       <div className="space-y-1">
                         <p className="font-medium text-gray-950">
                           {currencyFormatter.format(product.price)}
@@ -366,20 +379,11 @@ export default function AdminProductsTable({
                         )}
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       <StockStatus product={product} />
                     </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={
-                          product.status === "active"
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : "border-gray-200 bg-gray-50 text-gray-600"
-                        }
-                      >
-                        {product.status}
-                      </Badge>
+                    <TableCell className="hidden md:table-cell">
+                      <ProductStatusBadge status={product.status} />
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -401,6 +405,7 @@ export default function AdminProductsTable({
                               ? "inactive"
                               : "active"}
                           </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
                             variant="destructive"
                             onClick={() => setDeleteTarget(product)}
@@ -547,6 +552,21 @@ export default function AdminProductsTable({
   );
 }
 
+function ProductStatusBadge({ status }: { status: AdminProductRow["status"] }) {
+  return (
+    <Badge
+      variant="outline"
+      className={
+        status === "active"
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : "border-gray-200 bg-gray-50 text-gray-600"
+      }
+    >
+      {status}
+    </Badge>
+  );
+}
+
 function StockStatus({ product }: { product: AdminProductRow }) {
   if (!product.trackInventory) return <span className="text-gray-400">-</span>;
 
@@ -593,8 +613,10 @@ function SortableHead({
   activeKey,
   direction,
   onSort,
+  className,
 }: {
   label: string;
+  className?: string;
   sortKey: SortKey;
   activeKey: SortKey;
   direction: SortDirection;
@@ -603,7 +625,7 @@ function SortableHead({
   const isActive = activeKey === sortKey;
 
   return (
-    <TableHead>
+    <TableHead className={className}>
       <button
         type="button"
         onClick={() => onSort(sortKey)}

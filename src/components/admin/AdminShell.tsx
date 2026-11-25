@@ -5,11 +5,10 @@ import AdminHeader from "@/components/admin/AdminHeader";
 import AdminMobileDrawer from "@/components/admin/AdminMobileDrawer";
 import AdminSidebar from "@/components/admin/AdminSidebar";
 import { useSetBusinessId } from "@/components/providers/BusinessProvider";
-import { getBusinessDetail } from "@/services/HelperFunctions";
 
 interface AdminShellProps {
   businessId: string;
-  restaurantName?: string;
+  business: AdminBusinessIdentity;
   children: ReactNode;
 }
 
@@ -21,68 +20,23 @@ export interface AdminBusinessIdentity {
 
 export default function AdminShell({
   businessId,
-  restaurantName,
+  business,
   children,
 }: AdminShellProps) {
   const setBusinessId = useSetBusinessId();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-  const [resolvedRestaurantName, setResolvedRestaurantName] = useState(
-    restaurantName
-  );
-  const [businessIdentity, setBusinessIdentity] =
-    useState<AdminBusinessIdentity | null>(null);
 
   useEffect(() => {
     setBusinessId(businessId);
   }, [businessId, setBusinessId]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadRestaurantName() {
-      if (restaurantName) {
-        setResolvedRestaurantName(restaurantName);
-        return;
-      }
-
-      const numericBusinessId = Number(businessId);
-      if (!Number.isFinite(numericBusinessId)) return;
-
-      try {
-        const businessDetails = await getBusinessDetail(numericBusinessId);
-        const business = businessDetails?.[0];
-        if (isMounted) {
-          const name =
-            business?.BUSINESS_NAME ||
-            business?.SHORT_NAME ||
-            restaurantName ||
-            "Selected restaurant";
-          setResolvedRestaurantName(name);
-          setBusinessIdentity({
-            name,
-            logoUrl: business?.LOGO || business?.IMAGE_URL || null,
-            status: business?.STATUS === 1 ? "active" : "inactive",
-          });
-        }
-      } catch (error) {
-        console.error("Failed to load admin shell business details:", error);
-      }
-    }
-
-    loadRestaurantName();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [businessId, restaurantName]);
 
   return (
     <div className="min-h-screen bg-gray-100">
       <div className="hidden md:fixed md:inset-y-0 md:left-0 md:z-40 md:flex md:w-20 lg:w-60">
         <AdminSidebar
           businessId={businessId}
-          restaurantName={resolvedRestaurantName}
-          business={businessIdentity}
+          restaurantName={business.name}
+          business={business}
         />
       </div>
 
@@ -92,8 +46,8 @@ export default function AdminShell({
           mobileNavigation={
             <AdminMobileDrawer
               businessId={businessId}
-              restaurantName={resolvedRestaurantName}
-              business={businessIdentity}
+              restaurantName={business.name}
+              business={business}
               isOpen={isMobileNavOpen}
               onOpenChange={setIsMobileNavOpen}
             />

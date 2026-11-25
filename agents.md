@@ -6,7 +6,7 @@ This repository is the Foodeez admin panel for managing restaurants and their pr
 
 Primary stack:
 
-- Next.js App Router with React client components where interactive state is needed.
+- Next.js 16 App Router and React 19, with client components where interactive state is needed.
 - TypeScript throughout the app and component layers.
 - Prisma v7 with a generated client in `prisma/generated/prisma`.
 - MySQL/MariaDB through `@prisma/adapter-mariadb`.
@@ -14,6 +14,16 @@ Primary stack:
 - Tailwind CSS v4 with Foodeez theme tokens in `src/app/globals.css`.
 - Radix UI primitives, `class-variance-authority`, `tailwind-merge`, and `lucide-react`.
 - S3-compatible media upload/storage through `src/lib/s3-storage.ts`.
+
+Commands (run from the repository root; on Windows use `npm.cmd` / `npx.cmd`):
+
+| Task | Command | Notes |
+|---|---|---|
+| Dev server | `npm.cmd run dev -- -p 3001` | `NEXTAUTH_URL` in `.env` expects port 3001; the customer site uses 3000 |
+| Tests | `npm.cmd test` | `tsx --test` over `src/**/*.test.ts`; no database needed |
+| Typecheck | `npx.cmd tsc --noEmit` | |
+| Lint | `npm.cmd run lint` | ESLint 9 flat config from `eslint-config-next`; older files have existing `react-hooks` errors, so check the files you changed |
+| Build | `npm.cmd run build` | Runs `prisma generate`, then `next build` |
 
 Important folders:
 
@@ -54,6 +64,9 @@ Existing pages:
 - `/auth/signin`: credentials sign-in page.
 - `/auth/forgot-password`: forgot-password page.
 - `/auth/reset-password`: reset-password page.
+- `/unsubscribe`: public marketing unsubscribe page (shows a button; only its POST unsubscribes).
+- `/platform`, `/platform/restaurants`, `/platform/requests`, `/platform/customers`, `/platform/moderation`, `/platform/marketing` (plus `/new` and `/[campaignId]`): Super Admin area; see "Super Admin, Onboarding and Marketing".
+- `/dashboard/[businessId]/reservations`: selected-business reservations; see "Reservations and Email Verification".
 - `/dashboard`: authenticated business-owner landing page. It is now a server-rendered Shopify-style business selector that resolves owned businesses and shows business cards with logo/avatar, status badge, and a "Go to Dashboard" link.
 - `/dashboard/[businessId]`: selected-business overview page inside `AdminShell`. It is server-rendered and shows KPI cards for total orders, total revenue, pending orders, and active products, followed by a recent-orders table.
 - `/dashboard/[businessId]` and nested selected-business routes are wrapped by `src/app/dashboard/[businessId]/layout.tsx`, which now renders the shared admin shell instead of the older public navbar/footer chrome.
@@ -228,7 +241,7 @@ Core layout components:
 - `AdminShell` is the shared selected-business dashboard wrapper. It composes the fixed desktop sidebar, mobile drawer trigger, sticky admin header, and padded scrollable content area.
 - `AdminSidebar` renders the selected business identity at the top, including logo/initials avatar, business name, status label when available, and a full-width Switch Business link to `/dashboard`.
 - `AdminSidebar` navigation order is Dashboard, Orders, collapsible Menu group, then Settings. The Menu group auto-expands on `/menu` routes and contains Menu Cards, Products, Categories, and Tags with indented child links and a left accent border.
-- `AdminSidebar` footer renders the authenticated owner from NextAuth session data, including profile image when available or an initials avatar, truncated owner name, and logout action.
+- `AdminSidebar` footer renders the authenticated owner from NextAuth session data through the shared `AccountCard` and `LogoutButton` (`src/components/admin/AccountCard.tsx`). The `/platform` sidebar (desktop footer, plus a mobile logout icon) and the `/dashboard` business selector header reuse the same components, so the signed-in identity and logout look the same everywhere.
 - `AdminMobileDrawer` provides the hamburger-triggered slide-in navigation on small screens, reusing the sidebar nav items with visible labels and closing on outside click or Escape. The mobile drawer uses a fixed full-height panel and fixed backdrop.
 - `AdminHeader` auto-generates breadcrumbs and the page title from route segments. It includes a static notification button and a Quick Actions dropdown linking to new product, new category, and orders routes.
 - `AdminHeader` auto-generates breadcrumbs and the page title from route segments. It includes the business notification bell/dropdown with unread count, 30-second polling, mark-read behavior, browser Notification API prompts, and a Quick Actions dropdown linking to new product, new category, and orders routes.
@@ -343,3 +356,21 @@ Orders-management components:
 - `/dashboard/[businessId]/reservations` lists upcoming and past `reserve_table` rows by Swiss date (`zurichToday`) for the signed-in owner (`requireBusinessAccess`). Confirm or decline only changes a waiting row of that restaurant (`STATUS` 1 → 2 confirmed / 3 declined) and emails the guest; declining asks first. Both live in `src/services/reservations-management.ts`.
 - Password sign-in refuses accounts whose `visitors_account.EMAIL_VERIFIED_DATETIME` is null (manual `20261120000000_add_email_verification` migration; existing accounts are backfilled as verified). Accounts confirm their email on foodeez.ch; a completed password reset here also confirms it. The sign-in page shows only the rate-limit and confirm-email server messages verbatim.
 - Approving an onboarding request locks the `business` row first (`SELECT ... FOR UPDATE`) so parallel approvals cannot create two owners.
+
+## Database State and Local Testing (2026-11-20)
+
+- Applied to the Clever Cloud production database and to the owner's local `foodeez` database: `20261117000000_add_platform_admin` and `20261120000000_add_email_verification`. The local `foodeez` database still lacks the October 2026 migrations (`20261012000000` to `20261019000000`); do not write to it without asking.
+- Super Admins: the developer's account (production and local) and, temporarily, the shared Foodeez owner account for Mehmood (production only). Find them with `SELECT EMAIL_ADDRESS FROM visitors_account WHERE PLATFORM_ROLE = 'super_admin';` and remove the temporary one only when the owner asks.
+- Write tests and browser tests use the local `foodeez_test` copy (all migrations applied, every email rewritten to `delivered+…@resend.dev`), selected through a temporary, gitignored `.env.local` that is deleted afterwards. The local `RESEND_API_KEY` is invalid, so emails fail locally.
+- Required Vercel environment variables for this app's newer features: `EMAIL_FROM` (verified Resend domain) and `CUSTOMER_SITE_URL`; `MARKETING_TOKEN_SECRET` is optional.
+
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

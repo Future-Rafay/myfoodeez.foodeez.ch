@@ -1,8 +1,6 @@
-import Link from "next/link";
 import ConfirmActionButton from "@/components/platform/ConfirmActionButton";
-import { EmptyState, PageHeader, StatusPill, formatDate } from "@/components/platform/PlatformUi";
+import { EmptyState, FilterTabs, PageHeader, StatusPill, formatDate } from "@/components/platform/PlatformUi";
 import { restaurantClaimUrl, toExternalUrl } from "@/lib/customer-site";
-import { cn } from "@/lib/utils";
 import { listOnboardingRequests, type RequestView } from "@/services/platform-onboarding";
 import { approveRequest, rejectRequest } from "../actions";
 
@@ -34,20 +32,11 @@ export default async function PlatformRequestsPage({ searchParams }: { searchPar
       />
       {notice ? <p role="status" className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">{notice}</p> : null}
       {error ? <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      <div className="mb-4 flex flex-wrap gap-2">
-        {VIEWS.map((item) => (
-          <Link
-            key={item.value}
-            href={`/platform/requests?view=${item.value}`}
-            className={cn(
-              "rounded-full border px-3 py-1 text-sm font-medium",
-              view === item.value ? "border-foodeez-primary bg-foodeez-primary text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-            )}
-          >
-            {item.label}
-          </Link>
-        ))}
-      </div>
+      <FilterTabs
+        label="Request views"
+        active={view}
+        items={VIEWS.map((item) => ({ value: item.value, label: item.label, href: `/platform/requests?view=${item.value}` }))}
+      />
       {requests.length === 0 ? (
         <EmptyState>No requests here.</EmptyState>
       ) : (

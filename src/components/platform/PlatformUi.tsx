@@ -2,11 +2,13 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { PLATFORM_PAGE_SIZE } from "@/services/platform-data";
 
-export function PageHeader({ title, description, children }: { title: string; description?: string; children?: React.ReactNode }) {
+/** `level="h2"` inside the restaurant dashboard, whose header already renders the page h1. */
+export function PageHeader({ title, description, children, level = "h1" }: { title: string; description?: string; children?: React.ReactNode; level?: "h1" | "h2" }) {
+  const Heading = level;
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-950">{title}</h1>
+        <Heading className="text-2xl font-semibold text-gray-950">{title}</Heading>
         {description ? <p className="mt-1 text-sm text-gray-600">{description}</p> : null}
       </div>
       {children}
@@ -22,6 +24,28 @@ export function StatusPill({ tone, children }: { tone: "green" | "amber" | "gray
     red: "border-red-200 bg-red-50 text-red-700",
   };
   return <span className={cn("inline-flex rounded-md border px-2 py-0.5 text-xs font-medium", tones[tone])}>{children}</span>;
+}
+
+/** Link-based filter tabs shared by the list pages; tall enough to tap on a phone. */
+export function FilterTabs({ items, active, label }: { items: { value: string; label: string; href: string }[]; active: string; label: string }) {
+  return (
+    <nav aria-label={label} className="mb-4 flex flex-wrap gap-2">
+      {items.map((item) => (
+        <Link
+          key={item.value}
+          href={item.href}
+          aria-current={active === item.value ? "page" : undefined}
+          className={cn(
+            "inline-flex min-h-10 items-center rounded-full border px-4 text-sm font-medium transition-colors sm:min-h-9",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foodeez-primary/40 focus-visible:ring-offset-1",
+            active === item.value ? "border-foodeez-primary bg-foodeez-primary text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+          )}
+        >
+          {item.label}
+        </Link>
+      ))}
+    </nav>
+  );
 }
 
 /** GET search form: keeps the other query values as hidden fields. */

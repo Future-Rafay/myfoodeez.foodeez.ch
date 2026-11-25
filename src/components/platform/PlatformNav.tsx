@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ClipboardCheck, LayoutDashboard, Mail, MessageSquareText, Store, Users } from "lucide-react";
+import { ClipboardCheck, History, LayoutDashboard, Mail, MessageSquareText, Store, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const items = [
@@ -12,6 +12,7 @@ const items = [
   { label: "Customers", href: "/platform/customers", icon: Users },
   { label: "Moderation", href: "/platform/moderation", icon: MessageSquareText },
   { label: "Marketing", href: "/platform/marketing", icon: Mail },
+  { label: "Audit log", href: "/platform/audit", icon: History },
 ];
 
 export default function PlatformNav({ counts }: { counts: Partial<Record<string, number>> }) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -233,6 +233,10 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
   const [toast, setToast] = useState<ToastState>(null);
   const [selectedOrder, setSelectedOrder] = useState<AdminOrderRow | null>(null);
   const [rejectOrder, setRejectOrder] = useState<AdminOrderRow | null>(null);
+  const [finishTarget, setFinishTarget] = useState<{
+    order: AdminOrderRow;
+    status: NormalizedOrderStatus;
+  } | null>(null);
   const [rejectionReason, setRejectionReason] = useState(REJECTION_REASONS[0]);
   const [rejectionNote, setRejectionNote] = useState("");
 
@@ -366,6 +370,22 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
     }
   }
 
+  // Delivered and picked up are final (stock is taken off for good), so they ask first; other steps stay one tap.
+  function requestStatus(order: AdminOrderRow, nextStatus: NormalizedOrderStatus) {
+    if (nextStatus === "delivered" || nextStatus === "picked_up") {
+      setFinishTarget({ order, status: nextStatus });
+      return;
+    }
+    void updateStatus(order, nextStatus);
+  }
+
+  async function confirmFinish() {
+    if (!finishTarget) return;
+    if (await updateStatus(finishTarget.order, finishTarget.status)) {
+      setFinishTarget(null);
+    }
+  }
+
   async function saveEta(order: AdminOrderRow, eta: string) {
     setIsSavingEta(true);
     setError("");
@@ -488,25 +508,25 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
 
   return (
     <div className="space-y-5">
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <section className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
         {kpiCards.map((card) => {
           const Icon = card.icon;
 
           return (
             <Card key={card.label} className="border-gray-200 bg-white shadow-sm">
-              <CardContent className="p-5">
+              <CardContent className="p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-500">
                       {card.label}
                     </p>
-                    <p className="mt-2 text-2xl font-semibold tracking-tight text-gray-950">
+                    <p className="mt-2 text-xl font-semibold tracking-tight text-gray-950 sm:text-2xl">
                       {card.value}
                     </p>
                   </div>
                   <div
                     className={cn(
-                      "flex size-10 items-center justify-center rounded-lg",
+                      "flex size-8 shrink-0 items-center justify-center rounded-lg sm:size-10",
                       card.className
                     )}
                   >
@@ -607,7 +627,50 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
             <OrdersSkeleton />
           ) : orders.length ? (
             <>
-              <div className="overflow-x-auto">
+              {/* Phones get tappable cards; every action lives in the order details. */}
+              <ul className="divide-y divide-gray-100 md:hidden">
+                {orders.map((order) => (
+                  <li key={order.BUSINESS_ORDER_ID}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedOrder(order)}
+                      className="w-full space-y-2 px-4 py-4 text-left hover:bg-gray-50 focus-visible:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-foodeez-primary/40"
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="font-semibold text-gray-950">
+                          {orderNumberLabel(order)}
+                        </span>
+                        <StatusBadge order={order} />
+                      </span>
+                      <span className="block text-sm">
+                        <span className="font-medium text-gray-900">
+                          {customerName(order)}
+                        </span>
+                        <span className="text-gray-500">
+                          {" · "}
+                          {order.VISITOR_PHONE || "No phone"}
+                        </span>
+                      </span>
+                      <span className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-gray-600">
+                        <span className="capitalize">{order.ORDER_TYPE}</span>
+                        <span>{itemsSummary(order)}</span>
+                        <span className="font-medium text-gray-950">
+                          {currencyFormatter.format(order.FINAL_AMOUNT)}
+                        </span>
+                        <PaymentStatusBadge order={order} />
+                      </span>
+                      <span className="flex items-center justify-between gap-3 text-xs text-gray-500">
+                        <span>{formatDateTime(order.CREATION_DATETIME)}</span>
+                        <span className="flex items-center gap-1">
+                          ETA <EtaTime order={order} prepDefaults={prepDefaults} />
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="hidden overflow-x-auto md:block">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-gray-50 hover:bg-gray-50">
@@ -620,14 +683,16 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                       <TableHead>Status</TableHead>
                       <TableHead>ETA</TableHead>
                       <TableHead>Ordered at</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead className="sticky right-0 bg-gray-50 text-right shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.12)]">
+                        Actions
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {orders.map((order) => (
                       <TableRow
                         key={order.BUSINESS_ORDER_ID}
-                        className="hover:bg-gray-50"
+                        className="group hover:bg-gray-50"
                       >
                         <TableCell className="font-medium text-gray-950">
                           {orderNumberLabel(order)}
@@ -659,7 +724,8 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                         <TableCell className="text-gray-500">
                           {formatDateTime(order.CREATION_DATETIME)}
                         </TableCell>
-                        <TableCell className="text-right">
+                        {/* Pinned so the actions never scroll out of view on narrower screens. */}
+                        <TableCell className="sticky right-0 bg-white text-right shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.12)] group-hover:bg-gray-50">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                               <Button variant="outline" size="icon">
@@ -678,9 +744,14 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                               {getAllowedOrderActions(order).length > 0 && (
                                 <div className="my-1 h-px bg-gray-100" />
                               )}
-                              {getAllowedOrderActions(order).map((action) => (
+                              {getAllowedOrderActions(order).map((action, index, all) => (
+                                <Fragment key={action.status}>
+                                {action.variant === "destructive" &&
+                                  index > 0 &&
+                                  all[index - 1].variant !== "destructive" && (
+                                    <div className="my-1 h-px bg-gray-100" />
+                                  )}
                                 <DropdownMenuItem
-                                  key={action.status}
                                   disabled={isUpdating}
                                   className={cn(
                                     action.variant === "destructive" &&
@@ -692,11 +763,12 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                                       return;
                                     }
 
-                                    void updateStatus(order, action.status);
+                                    requestStatus(order, action.status);
                                   }}
                                 >
                                   {action.label}
                                 </DropdownMenuItem>
+                                </Fragment>
                               ))}
 
                             </DropdownMenuContent>
@@ -715,7 +787,7 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
-                    size="sm"
+                    className="h-10 sm:h-8"
                     disabled={page <= 1}
                     onClick={() => setPage((current) => current - 1)}
                   >
@@ -724,7 +796,7 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
                   </Button>
                   <Button
                     variant="outline"
-                    size="sm"
+                    className="h-10 sm:h-8"
                     disabled={page >= totalPages}
                     onClick={() => setPage((current) => current + 1)}
                   >
@@ -757,7 +829,7 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
         isSavingEta={isSavingEta}
         isMarkingPaid={isMarkingPaid}
         onClose={() => setSelectedOrder(null)}
-        onUpdateStatus={updateStatus}
+        onUpdateStatus={requestStatus}
         onSaveEta={(order, eta) => saveEta(order, eta)}
         onMarkPaid={(order) => markPaid(order)}
         onReject={(order) => setRejectOrder(order)}
@@ -771,6 +843,12 @@ export default function AdminOrdersPage({ businessId }: { businessId: number }) 
         onNoteChange={setRejectionNote}
         onClose={() => setRejectOrder(null)}
         onConfirm={() => void confirmReject()}
+      />
+      <FinishOrderModal
+        target={finishTarget}
+        isUpdating={isUpdating}
+        onClose={() => setFinishTarget(null)}
+        onConfirm={() => void confirmFinish()}
       />
     </div>
   );
@@ -810,14 +888,14 @@ function EtaTime({
   const eta = getDisplayEta(order, prepDefaults);
 
   return (
-    <div className="flex items-center gap-2">
+    <span className="inline-flex items-center gap-2">
       <span>{eta.time}</span>
       {eta.isDefault && (
         <Badge variant="outline" className="border-gray-200 bg-gray-50 text-gray-600">
           Default
         </Badge>
       )}
-    </div>
+    </span>
   );
 }
 
@@ -851,8 +929,8 @@ function DetailLine({
 }) {
   return (
     <div className="flex items-start justify-between gap-4 text-sm">
-      <span className="text-gray-500">{label}</span>
-      <span className="text-right font-medium text-gray-900">{value}</span>
+      <span className="shrink-0 text-gray-500">{label}</span>
+      <span className="min-w-0 break-words text-right font-medium text-gray-900">{value}</span>
     </div>
   );
 }
@@ -887,6 +965,54 @@ function MoneyLine({
         {currencyFormatter.format(value)}
       </span>
     </div>
+  );
+}
+
+function FinishOrderModal({
+  target,
+  isUpdating,
+  onClose,
+  onConfirm,
+}: {
+  target: { order: AdminOrderRow; status: NormalizedOrderStatus } | null;
+  isUpdating: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!target) return null;
+  const { order, status } = target;
+  const label = status === "picked_up" ? "picked up" : "delivered";
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            Mark order {orderNumberLabel(order)} as {label}?
+          </DialogTitle>
+          <DialogDescription>
+            This completes the order and takes its items out of stock for good. It cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        {Number(order.PAYMENT_DONE) === 0 && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            This order is still unpaid. Mark the cash payment as paid separately in the order details.
+          </p>
+        )}
+        <DialogFooter className="sm:justify-between">
+          <Button variant="outline" onClick={onClose} disabled={isUpdating} autoFocus>
+            Cancel
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={isUpdating}
+            className="bg-foodeez-primary text-white hover:bg-foodeez-secondary"
+          >
+            {isUpdating ? "Saving..." : `Mark as ${label}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -992,7 +1118,7 @@ function OrderDetailsModal({
   onUpdateStatus: (
     order: AdminOrderRow,
     status: NormalizedOrderStatus
-  ) => Promise<unknown>;
+  ) => unknown;
   onSaveEta: (order: AdminOrderRow, eta: string) => Promise<void>;
   onMarkPaid: (order: AdminOrderRow) => Promise<void>;
   onReject: (order: AdminOrderRow) => void;
@@ -1017,7 +1143,7 @@ function OrderDetailsModal({
 
   return (
     <Dialog open={Boolean(order)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>Order {orderNumberLabel(order)}</DialogTitle>
           <DialogDescription>
@@ -1210,29 +1336,22 @@ function OrderDetailsModal({
           </Table>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex-col sm:flex-col">
           <div className="w-full flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 
             <div className="mt-4 flex flex-wrap gap-2">
-              {actions.map((action) => (
-                <Button
-                  key={action.status}
-                  disabled={isUpdating}
-                  variant={action.variant === "destructive" ? "destructive" : "default"}
-                  onClick={() =>
-                    action.status === "rejected"
-                      ? onReject(order)
-                      : onUpdateStatus(order, action.status)
-                  }
-                  className={cn(
-                    action.variant !== "destructive" &&
-                    "bg-foodeez-primary text-white hover:bg-foodeez-secondary"
-                  )}
-                >
-                  {action.label}
-                </Button>
-              ))}
-             
+              {actions
+                .filter((action) => action.variant !== "destructive")
+                .map((action) => (
+                  <Button
+                    key={action.status}
+                    disabled={isUpdating}
+                    onClick={() => onUpdateStatus(order, action.status)}
+                    className="bg-foodeez-primary text-white hover:bg-foodeez-secondary"
+                  >
+                    {action.label}
+                  </Button>
+                ))}
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               {canEditEta && (
@@ -1261,6 +1380,27 @@ function OrderDetailsModal({
               </Button>
             </div>
           </div>
+          {/* Kept on its own row, away from routine status buttons, so it is not tapped by accident. */}
+          {actions.some((action) => action.variant === "destructive") && (
+            <div className="flex w-full flex-wrap gap-2 border-t border-gray-100 pt-4">
+              {actions
+                .filter((action) => action.variant === "destructive")
+                .map((action) => (
+                  <Button
+                    key={action.status}
+                    variant="destructive"
+                    disabled={isUpdating}
+                    onClick={() =>
+                      action.status === "rejected"
+                        ? onReject(order)
+                        : onUpdateStatus(order, action.status)
+                    }
+                  >
+                    {action.label}
+                  </Button>
+                ))}
+            </div>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog >

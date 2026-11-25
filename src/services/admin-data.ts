@@ -151,6 +151,23 @@ export async function userOwnsBusiness(businessId: number) {
   return Boolean(access);
 }
 
+/** Name, logo and status for the admin shell, or null when the signed-in account does not own this restaurant. */
+export async function getBusinessShellIdentity(businessId: number) {
+  const owns = await userOwnsBusiness(businessId).catch(() => false);
+  if (!owns) return null;
+
+  const business = await prisma.business_detail_view_all.findFirst({
+    where: { BUSINESS_ID: businessId },
+  });
+  const name = business?.BUSINESS_NAME || business?.SHORT_NAME || "Selected restaurant";
+
+  return {
+    name,
+    logoUrl: business?.LOGO || business?.IMAGE_URL || null,
+    status: business?.STATUS === 1 ? ("active" as const) : ("inactive" as const),
+  };
+}
+
 export async function requireBusinessAccess(businessId: number) {
   const hasAccess = await userOwnsBusiness(businessId);
 

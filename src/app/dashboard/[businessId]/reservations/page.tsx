@@ -1,8 +1,6 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import ConfirmActionButton from "@/components/platform/ConfirmActionButton";
-import { EmptyState, PageHeader, StatusPill } from "@/components/platform/PlatformUi";
-import { cn } from "@/lib/utils";
+import { EmptyState, FilterTabs, PageHeader, StatusPill } from "@/components/platform/PlatformUi";
 import { listReservations, type ReservationView } from "@/services/reservations-management";
 import { answerReservation } from "./actions";
 
@@ -38,23 +36,14 @@ export default async function ReservationsPage({
 
   return (
     <>
-      <PageHeader title="Reservations" description="Table requests from foodeez.ch. Confirm or decline each one; the guest gets an email with your answer." />
+      <PageHeader level="h2" title="Reservations" description="Table requests from foodeez.ch. Confirm or decline each one; the guest gets an email with your answer." />
       {done ? <p role="status" className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">{done}</p> : null}
       {error ? <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      <div className="mb-4 flex flex-wrap gap-2">
-        {VIEWS.map((item) => (
-          <Link
-            key={item.value}
-            href={`/dashboard/${businessId}/reservations?view=${item.value}`}
-            className={cn(
-              "rounded-full border px-3 py-1 text-sm font-medium",
-              view === item.value ? "border-foodeez-primary bg-foodeez-primary text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-            )}
-          >
-            {item.label}
-          </Link>
-        ))}
-      </div>
+      <FilterTabs
+        label="Reservation views"
+        active={view}
+        items={VIEWS.map((item) => ({ value: item.value, label: item.label, href: `/dashboard/${businessId}/reservations?view=${item.value}` }))}
+      />
       {reservations.length === 0 ? (
         <EmptyState>{view === "upcoming" ? "No upcoming reservations." : "No past reservations."}</EmptyState>
       ) : (

@@ -1,10 +1,8 @@
-import Link from "next/link";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ConfirmActionButton from "@/components/platform/ConfirmActionButton";
-import { EmptyState, PageHeader, Pagination, SearchForm, StatusPill, formatDate } from "@/components/platform/PlatformUi";
+import { EmptyState, FilterTabs, PageHeader, Pagination, SearchForm, StatusPill, formatDate } from "@/components/platform/PlatformUi";
 import { listRestaurants, parsePage, parseSearch, type RestaurantFilter } from "@/services/platform-data";
-import { restaurantProfileUrl } from "@/lib/customer-site";
-import { cn } from "@/lib/utils";
+import Link from "next/link";
 import { setRestaurantApproval, setRestaurantStatus } from "../actions";
 
 const FILTERS: { value: RestaurantFilter; label: string }[] = [
@@ -26,20 +24,11 @@ export default async function PlatformRestaurantsPage({ searchParams }: { search
       <PageHeader title="Restaurants" description="Approve restaurants and switch them on or off. Only approved, switched-on restaurants appear on foodeez.ch.">
         <SearchForm action="/platform/restaurants" search={search} placeholder="Name, email, town or ID" hidden={{ filter }} />
       </PageHeader>
-      <div className="mb-4 flex flex-wrap gap-2">
-        {FILTERS.map((item) => (
-          <Link
-            key={item.value}
-            href={`/platform/restaurants?${new URLSearchParams({ filter: item.value, ...(search ? { q: search } : {}) })}`}
-            className={cn(
-              "rounded-full border px-3 py-1 text-sm font-medium",
-              filter === item.value ? "border-foodeez-primary bg-foodeez-primary text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
-            )}
-          >
-            {item.label}
-          </Link>
-        ))}
-      </div>
+      <FilterTabs
+        label="Restaurant filters"
+        active={filter}
+        items={FILTERS.map((item) => ({ value: item.value, label: item.label, href: `/platform/restaurants?${new URLSearchParams({ filter: item.value, ...(search ? { q: search } : {}) })}` }))}
+      />
       {rows.length === 0 ? (
         <EmptyState>No restaurants match.</EmptyState>
       ) : (
@@ -48,34 +37,35 @@ export default async function PlatformRestaurantsPage({ searchParams }: { search
             <TableHeader>
               <TableRow>
                 <TableHead>Restaurant</TableHead>
-                <TableHead>Email</TableHead>
+                <TableHead className="hidden md:table-cell">Email</TableHead>
                 <TableHead>State</TableHead>
-                <TableHead>Owner</TableHead>
-                <TableHead>Added</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="hidden sm:table-cell">Owner</TableHead>
+                <TableHead className="hidden lg:table-cell">Added</TableHead>
+                <TableHead className="sticky right-0 bg-white text-right shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.12)]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell>
-                    <a href={restaurantProfileUrl(row.name, row.id)} target="_blank" rel="noreferrer" className="font-medium text-gray-950 hover:text-foodeez-primary hover:underline">
+                    <Link href={`/platform/restaurants/${row.id}`} className="font-medium text-gray-950 hover:text-foodeez-primary hover:underline">
                       {row.name}
-                    </a>
+                    </Link>
                     <p className="text-xs text-gray-500">
                       #{row.id}
                       {row.town ? ` · ${row.town}` : ""}
                     </p>
                   </TableCell>
-                  <TableCell className="max-w-56 truncate text-gray-600">{row.email || "—"}</TableCell>
+                  <TableCell className="hidden max-w-56 truncate text-gray-600 md:table-cell">{row.email || "—"}</TableCell>
                   <TableCell>
                     {!row.approved ? <StatusPill tone="amber">Waiting</StatusPill> : row.active ? <StatusPill tone="green">Live</StatusPill> : <StatusPill tone="gray">Off</StatusPill>}
                   </TableCell>
-                  <TableCell>{row.hasOwner ? <StatusPill tone="green">Claimed</StatusPill> : <StatusPill tone="gray">Unclaimed</StatusPill>}</TableCell>
-                  <TableCell className="text-gray-600">{formatDate(row.createdAt)}</TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell">{row.hasOwner ? <StatusPill tone="green">Claimed</StatusPill> : <StatusPill tone="gray">Unclaimed</StatusPill>}</TableCell>
+                  <TableCell className="hidden text-gray-600 lg:table-cell">{formatDate(row.createdAt)}</TableCell>
+                  {/* Pinned so Approve / Switch off stay reachable when the table scrolls sideways. */}
+                  <TableCell className="sticky right-0 bg-white shadow-[-8px_0_8px_-8px_rgba(0,0,0,0.12)]">
                     {/* The routine action sits on the left; the one that takes a restaurant offline is set apart and asks first. */}
-                    <div className="flex items-center justify-end gap-10">
+                    <div className="flex items-center justify-end gap-6 sm:gap-10">
                       {!row.approved ? (
                         <ConfirmActionButton action={setRestaurantApproval} fields={{ businessId: row.id, approved: 1 }} label="Approve" tone="primary" />
                       ) : !row.active ? (
