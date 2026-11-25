@@ -241,7 +241,7 @@ Core layout components:
 - `AdminShell` is the shared selected-business dashboard wrapper. It composes the fixed desktop sidebar, mobile drawer trigger, sticky admin header, and padded scrollable content area.
 - `AdminSidebar` renders the selected business identity at the top, including logo/initials avatar, business name, status label when available, and a full-width Switch Business link to `/dashboard`.
 - `AdminSidebar` navigation order is Dashboard, Orders, collapsible Menu group, then Settings. The Menu group auto-expands on `/menu` routes and contains Menu Cards, Products, Categories, and Tags with indented child links and a left accent border.
-- `AdminSidebar` footer renders the authenticated owner from NextAuth session data, including profile image when available or an initials avatar, truncated owner name, and logout action.
+- `AdminSidebar` footer renders the authenticated owner from NextAuth session data through the shared `AccountCard` and `LogoutButton` (`src/components/admin/AccountCard.tsx`). The `/platform` sidebar (desktop footer, plus a mobile logout icon) and the `/dashboard` business selector header reuse the same components, so the signed-in identity and logout look the same everywhere.
 - `AdminMobileDrawer` provides the hamburger-triggered slide-in navigation on small screens, reusing the sidebar nav items with visible labels and closing on outside click or Escape. The mobile drawer uses a fixed full-height panel and fixed backdrop.
 - `AdminHeader` auto-generates breadcrumbs and the page title from route segments. It includes a static notification button and a Quick Actions dropdown linking to new product, new category, and orders routes.
 - `AdminHeader` auto-generates breadcrumbs and the page title from route segments. It includes the business notification bell/dropdown with unread count, 30-second polling, mark-read behavior, browser Notification API prompts, and a Quick Actions dropdown linking to new product, new category, and orders routes.
@@ -364,3 +364,13 @@ Orders-management components:
 - Write tests and browser tests use the local `foodeez_test` copy (all migrations applied, every email rewritten to `delivered+…@resend.dev`), selected through a temporary, gitignored `.env.local` that is deleted afterwards. The local `RESEND_API_KEY` is invalid, so emails fail locally.
 - Required Vercel environment variables for this app's newer features: `EMAIL_FROM` (verified Resend domain) and `CUSTOMER_SITE_URL`; `MARKETING_TOKEN_SECRET` is optional.
 
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
