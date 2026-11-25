@@ -2,7 +2,9 @@
 
 Restaurant owner dashboard and Super Admin panel for Foodeez: menus, products and stock, online orders and Stripe refunds, discounts, and the web POS. It shares one MySQL/MariaDB database with the customer site (`foodeez.ch`) and serves the API used by the `foodeez-pos` Android app.
 
-Stack: Next.js App Router, TypeScript, Prisma (MariaDB adapter), NextAuth credentials, Tailwind CSS, deployed on Vercel.
+Current release: **v1.0.0** (2026-11-26), the first stable release. For the next few months only minor fixes and tests are planned. Release and deployment notes are in [agents.md](agents.md).
+
+Stack: Next.js 16 App Router, TypeScript, Prisma (MariaDB adapter), NextAuth credentials, Tailwind CSS, deployed on Vercel.
 
 ## Setup
 
