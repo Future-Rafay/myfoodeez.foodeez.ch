@@ -363,6 +363,14 @@ Orders-management components:
 - Super Admins: the developer's account (production and local) and, temporarily, the shared Foodeez owner account for Mehmood (production only). Find them with `SELECT EMAIL_ADDRESS FROM visitors_account WHERE PLATFORM_ROLE = 'super_admin';` and remove the temporary one only when the owner asks.
 - Write tests and browser tests use the local `foodeez_test` copy (all migrations applied, every email rewritten to `delivered+…@resend.dev`), selected through a temporary, gitignored `.env.local` that is deleted afterwards. The local `RESEND_API_KEY` is invalid, so emails fail locally.
 - Required Vercel environment variables for this app's newer features: `EMAIL_FROM` (verified Resend domain) and `CUSTOMER_SITE_URL`; `MARKETING_TOKEN_SECRET` is optional.
+- The local `.env` and the developer's Vercel test deployments both use the production Clever Cloud database, so a local run writes real data. Production also has the customer repository's `20260613000000_add_google_data_fetched_at_columns` migration (applied 2026-11-25).
+
+## Release v1.0.0 and Deployment (2026-11-26)
+
+- v1.0.0 is tagged on `main` in both this repository and `foodeez.ch`; `package.json` is `1.0.0`. It is the first stable release: restaurant dashboard (orders, menu cards, products and stock, categories, tags, discounts, reservations, settings, notifications), the web POS at `/dashboard/[businessId]/pos`, Stripe refunds, and the Super Admin area (restaurants, requests, customers, moderation, marketing, audit log).
+- Stabilization: for the next few months, ship only minor fixes, tests and small updates. No large features or major dependency upgrades without the owner's approval; bump the patch version (`1.0.x`) for fixes and the minor version for small additions.
+- v2 backlog lives in the customer repository's `AGENTS.md`; low-stock thresholds stay out of scope. The separate `foodeez-pos` app is not part of this release.
+- Deployment: this `Future-Rafay` repository deploys to the developer's Vercel test project `myfoodeez-foodeez-ch` (myfoodeez-foodeez-ch.vercel.app). The live admin app is deployed only when the owner, Mehmood, copies a tested release into his own GitHub repository and Vercel, so a merge to `main` here does not change the live app.
 
 
 <!-- BEGIN:nextjs-agent-rules -->
